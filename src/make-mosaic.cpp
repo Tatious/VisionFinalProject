@@ -66,8 +66,8 @@ void load_images(vector<Image>& im, char* indir) {
 }
 
 void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
-  // TODO: Parallelize
   for (unsigned i=0; i < im.size(); i++) {
+    // <parallelize>
     if (squash) {
       im[i] = bilinear_resize(im[i], mosaicSize, mosaicSize);
     } else {
@@ -97,6 +97,7 @@ void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
       }
       im[i] = bilinear_resize(square, mosaicSize, mosaicSize);
     }
+    // </parallelize>
   }
   printf("Scaled source images to %d x %d\n", mosaicSize, mosaicSize);
 }
@@ -141,7 +142,7 @@ int main(int argc, char **argv) {
 
   for (int y = 0; y < input.h / mosaicSize; y++) {
     for (int x = 0; x < input.w / mosaicSize; x++) {
-      // TODO: Parallelize from here <
+      // <parallelize>
 
       Image piece(mosaicSize, mosaicSize, input.c);
 
@@ -162,7 +163,8 @@ int main(int argc, char **argv) {
           }
         }
       }
-      // > to here
+
+      // </parallelize>
     }
   }
 
