@@ -35,12 +35,14 @@ void load_images(vector<Image>& im, char* indir) {
   vector <unique_ptr<thread>> th;
   uint32_t img_total_count = 0;
 
+  // TODO: Make parallelization faster
   while ((entry = readdir(dp))) {
     if (entry != nullptr) {
         string fileName = string(entry->d_name);
         th.emplace_back(new thread([&, fileName]() {
           if (strcmp(fileName.c_str(), ".") && strcmp(fileName.c_str(), "..")
-              && ends_with(fileName, string(".png"))) {
+              && (ends_with(fileName, string(".png"))
+              || ends_with(fileName, string(".jpg")))) {
             string file = string(indir) + "/" + fileName;
             Image i = load_image(file);
             mtx.lock();
@@ -56,41 +58,81 @@ void load_images(vector<Image>& im, char* indir) {
 
   for (auto&e1:th)e1->join();th.clear();
 
-  printf("Loaded %d source images\n", img_total_count);
+  printf("Loaded %d raw source images\n", img_total_count);
   if (!img_total_count) {
     fprintf(stderr, "ERROR: Directory contains no source images.");
     exit(0);
   }
 }
 
-void scale_images(vector<Image>& im, int16_t mosaicSize) {
-  printf("%lu\n", im.size());
+void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
+  // TODO: Parallelize
+  for (unsigned i=0; i < im.size(); i++) {
+    if (squash) {
+      im[i] = bilinear_resize(im[i], mosaicSize, mosaicSize);
+    } else {
+      uint32_t sideLen = min(im[i].w, im[i].h);
+      Image square(sideLen, sideLen, im[i].c);
+
+      uint32_t xLower = 0;
+      uint32_t xUpper = im[i].w;
+      uint32_t yLower = 0;
+      uint32_t yUpper = im[i].h;
+
+      if (im[i].w != sideLen) {
+        xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
+        xUpper -= (uint32_t) floor((xUpper - sideLen) / 2.f);
+      }
+      if (im[i].h != sideLen) {
+        yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
+        yUpper -= (uint32_t) floor((yUpper - sideLen) / 2.f);
+      }
+
+      for (int k = 0; k < im[i].c; k++) {
+        for (int y = yLower; y < yUpper; y++) {
+          for (int x = xLower; x < xUpper; x++) {
+            square(x, y, k) = im[i](x, y, k);
+          }
+        }
+      }
+      im[i] = bilinear_resize(square, mosaicSize, mosaicSize);
+    }
+  }
+  printf("Scaled source images to %d x %d\n", mosaicSize, mosaicSize);
+}
+
+Image scale_image(Image im, int16_t mosaicSize) {
+
+  return bilinear_resize(im, im.w / mosaicSize * mosaicSize,
+    im.h / mosaicSize * mosaicSize);
 }
 
 int main(int argc, char **argv) {
-
-  // source directory, input image, mosaic size, output name
-  if (argc != 5) {
-    printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <mosaicSize> <outputImg>\n");
+  if (argc != 6) {
+    printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <mosaicSize>");
+    printf(" <squash?> <outputImg>\n");
     return 0;
   }
+  string outputFile = string(argv[5]);
 
   vector<Image> im;
   load_images(im, argv[1]);
-
-  Image srcImage = load_image(string(argv[2]));
 
   int16_t mosaicSize = (int16_t) atoi(argv[3]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
     exit(0);
   }
+  bool squash = (bool) atoi(argv[4]);
 
-  string outputFile = string(argv[4]);
+  Image inputImage = scale_image(load_image(string(argv[2])), mosaicSize);
+  printf("Loaded %d x %d input image\n", inputImage.w, inputImage.h);
 
-  scale_images(im, mosaicSize);
-  // scale source images
+  scale_images(im, mosaicSize, squash);
 
+  // Split srcImage up into subimages & search best match foreach of them
+  // Compare:
+  //    raw pixel values & derivative of image + scaled in RGB (binary search)
 
   return 0;
 }
