@@ -107,16 +107,25 @@ Image scale_image(Image im, int16_t mosaicSize) {
     im.h / mosaicSize * mosaicSize);
 }
 
+Image search_for_match(Image input, vector<Image> source) {
+
+  // TODO:
+  //  Compare:
+  //    raw pixel values & derivative of image + scaled in RGB (binary search)
+  return input;
+}
+
 int main(int argc, char **argv) {
+
   if (argc != 6) {
     printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <mosaicSize>");
     printf(" <squash?> <outputImg>\n");
     return 0;
   }
-  string outputFile = string(argv[5]);
+  string output = string(argv[5]);
 
-  vector<Image> im;
-  load_images(im, argv[1]);
+  vector<Image> source;
+  load_images(source, argv[1]);
 
   int16_t mosaicSize = (int16_t) atoi(argv[3]);
   if (mosaicSize <= 0) {
@@ -125,14 +134,39 @@ int main(int argc, char **argv) {
   }
   bool squash = (bool) atoi(argv[4]);
 
-  Image inputImage = scale_image(load_image(string(argv[2])), mosaicSize);
-  printf("Loaded %d x %d input image\n", inputImage.w, inputImage.h);
+  Image input = scale_image(load_image(string(argv[2])), mosaicSize);
+  printf("Loaded %d x %d input image\n", input.w, input.h);
 
-  scale_images(im, mosaicSize, squash);
+  scale_images(source, mosaicSize, squash);
 
-  // Split srcImage up into subimages & search best match foreach of them
-  // Compare:
-  //    raw pixel values & derivative of image + scaled in RGB (binary search)
+  for (int y = 0; y < input.h / mosaicSize; y++) {
+    for (int x = 0; x < input.w / mosaicSize; x++) {
+      // TODO: Parallelize from here <
+
+      Image piece(mosaicSize, mosaicSize, input.c);
+
+      for (int k = 0; k < input.c; k++) {
+        for (int j = 0; j < mosaicSize; j++) {
+          for (int i = 0; i < mosaicSize; i++) {
+            piece(i, j, k) = input(x * mosaicSize + i, y * mosaicSize + j, k);
+          }
+        }
+      }
+
+      piece = search_for_match(piece, source);
+
+      for (int k = 0; k < input.c; k++) {
+        for (int j = 0; j < mosaicSize; j++) {
+          for (int i = 0; i < mosaicSize; i++) {
+            input(x * mosaicSize + i, y * mosaicSize + j, k) = piece(i, j, k);
+          }
+        }
+      }
+      // > to here
+    }
+  }
+
+  save_png(input, "output/" + output);
 
   return 0;
 }
