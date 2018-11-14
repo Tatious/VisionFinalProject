@@ -15,18 +15,18 @@
 void save_image_stb(const Image& im, const string& name, int png)
   {
   unsigned char *data = (unsigned char *)calloc(im.w*im.h*im.c, sizeof(char));
-  
+
   for(int k = 0; k < im.c; ++k)for(int i = 0; i < im.w*im.h; ++i)
     data[i*im.c+k] = (unsigned char) roundf((255*im.data[i + k*im.w*im.h]));
-  
+
   string file=name + (png?".png":".jpg");
-  
+
   int success = 0;
   if(png)success = stbi_write_png(file.c_str(), im.w, im.h, im.c, data, im.w*im.c);
   else   success = stbi_write_jpg(file.c_str(), im.w, im.h, im.c, data, 100);
-  
+
   free(data);
-  
+
   if(!success) fprintf(stderr, "Failed to write image %s\n", file.c_str());
   }
 
@@ -34,7 +34,7 @@ void save_png(const Image& im, const string& name) { save_image_stb(im, name, 1)
 
 void save_image(const Image& im, const string& name) { save_image_stb(im, name, 0); }
 
-// 
+//
 // Load an image using stb
 // channels = [0..4]
 // channels > 0 forces the image to have that many channels
@@ -43,17 +43,17 @@ Image load_image_stb(const string& filename, int channels)
   {
   int w, h, c;
   unsigned char *data = stbi_load(filename.c_str(), &w, &h, &c, channels);
-  if (!data)
-    {
+  if (!data) {
     fprintf(stderr, "Cannot load image \"%s\"\nSTB Reason: %s\n", filename.c_str(), stbi_failure_reason());
+    fprintf(stderr, "ERROR: Cannot load image \"%s\".\n", filename.c_str());
     exit(0);
-    }
-  
+  }
+
   if (channels) c = channels;
-  
+
   int i,j,k;
   Image im(w, h, c);
-  
+
   for(k = 0; k < c; ++k)
     for(j = 0; j < h; ++j)
       for(i = 0; i < w; ++i)
