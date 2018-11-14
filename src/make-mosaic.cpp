@@ -10,6 +10,7 @@
 #include <thread>
 #include <map>
 #include <mutex>
+#include <limits>
 
 using namespace std;
 
@@ -20,6 +21,10 @@ bool ends_with(string const & value, string const & ending){
     return false;
   }
   return std::equal(ending.rbegin(), ending.rend(), value.rbegin());
+}
+
+float rand_float(float min, float max) {
+  return min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(max-min)));
 }
 
 void load_images(vector<Image>& im, char* indir) {
@@ -108,12 +113,48 @@ Image scale_image(Image im, int16_t mosaicSize) {
     im.h / mosaicSize * mosaicSize);
 }
 
+float l1_distance(Image a, Image b) {
+  float sum = 0.0;
+  assert(a.w == b.w && a.h == b.h && a.c == b.c);
+  for (int k = 0; k < a.c; k++) {
+    for (int j = 0; j < a.h; j++) {
+      for (int i = 0; i < a.w; i++) {
+        sum += fabs(a(i, j, k) - b(i, j, k));
+      }
+    }
+  }
+  return sum;
+}
+
+float l2_distance(Image a, Image b) {
+  float sum = 0.0;
+  assert(a.w == b.w && a.h == b.h && a.c == b.c);
+  for (int k = 0; k < a.c; k++) {
+    for (int j = 0; j < a.h; j++) {
+      for (int i = 0; i < a.w; i++) {
+        sum += pow(a(i, j, k) - b(i, j, k), 2);
+      }
+    }
+  }
+  return sum;
+}
+
 Image search_for_match(Image input, vector<Image> source) {
+
+  uint32_t best_index = 0;
+  float best_val = std::numeric_limits<float>::infinity();
+  for (int i = 0; i < source.size(); i++) {
+    float temp_val = l2_distance(input, source[i]);
+    if (temp_val < best_val) {
+      best_index = i;
+      best_val = temp_val;
+    }
+  }
 
   // TODO:
   //  Compare:
   //    raw pixel values & derivative of image + scaled in RGB (binary search)
-  return input;
+  return source[best_index];
 }
 
 int main(int argc, char **argv) {
@@ -140,10 +181,14 @@ int main(int argc, char **argv) {
 
   scale_images(source, mosaicSize, squash);
 
+  uint32_t processed = 0;
+  uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
+  //vector <unique_ptr<thread>> th;
   for (int y = 0; y < input.h / mosaicSize; y++) {
     for (int x = 0; x < input.w / mosaicSize; x++) {
       // <parallelize>
 
+      //th.emplace_back(new thread([&, x, y]() {
       Image piece(mosaicSize, mosaicSize, input.c);
 
       for (int k = 0; k < input.c; k++) {
@@ -163,10 +208,15 @@ int main(int argc, char **argv) {
           }
         }
       }
-
+      //mtx.lock();
+      processed++;
+      printf("%d / %d processed\n", processed, total);
+      //mtx.unlock();
+      //}));
       // </parallelize>
     }
   }
+  //for (auto&e1:th)e1->join();th.clear();
 
   save_png(input, "output/" + output);
 
