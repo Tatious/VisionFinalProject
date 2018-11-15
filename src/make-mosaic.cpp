@@ -86,17 +86,17 @@ void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
 
       if (im[i].w != sideLen) {
         xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
-        xUpper -= (uint32_t) floor((xUpper - sideLen) / 2.f);
+        xUpper -= (uint32_t) ceil((xUpper - sideLen) / 2.f);
       }
       if (im[i].h != sideLen) {
         yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
-        yUpper -= (uint32_t) floor((yUpper - sideLen) / 2.f);
+        yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
       }
 
       for (int k = 0; k < im[i].c; k++) {
         for (int y = yLower; y < yUpper; y++) {
           for (int x = xLower; x < xUpper; x++) {
-            square(x, y, k) = im[i](x, y, k);
+            square(x - xLower, y - yLower, k) = im[i](x, y, k);
           }
         }
       }
@@ -113,7 +113,7 @@ Image scale_image(Image im, int16_t mosaicSize) {
     im.h / mosaicSize * mosaicSize);
 }
 
-float l1_distance(Image a, Image b) {
+float l1_distance(Image& a, Image& b) {
   float sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (int k = 0; k < a.c; k++) {
@@ -126,7 +126,7 @@ float l1_distance(Image a, Image b) {
   return sum;
 }
 
-float l2_distance(Image a, Image b) {
+float l2_distance(Image& a, Image& b) {
   float sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (int k = 0; k < a.c; k++) {
@@ -139,22 +139,55 @@ float l2_distance(Image a, Image b) {
   return sum;
 }
 
-Image search_for_match(Image input, vector<Image> source) {
+Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
+  vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
+
+  float scale = 1.5;
 
   uint32_t best_index = 0;
   float best_val = std::numeric_limits<float>::infinity();
+
+  multimap<float, int> valueMap;
   for (int i = 0; i < source.size(); i++) {
-    float temp_val = l2_distance(input, source[i]);
-    if (temp_val < best_val) {
+    float temp_val_raw = l2_distance(input, source[i]);
+    float temp_val_dx =  l2_distance(input_dx, source_dx[i]);
+    float temp_val_dy =  l2_distance(input_dy, source_dy[i]);
+
+    float temp_val_sum = temp_val_raw + temp_val_dx + temp_val_dy;
+    valueMap.insert(std::pair<float, int>(temp_val_sum, i));
+    if (temp_val_sum < best_val) {
       best_index = i;
-      best_val = temp_val;
+      best_val = temp_val_sum;
     }
   }
 
-  // TODO:
-  //  Compare:
-  //    raw pixel values & derivative of image + scaled in RGB (binary search)
-  return source[best_index];
+  vector<int> candidates;
+  float thresh = -1.f;
+  map<float,int> :: iterator it;
+  for (it=valueMap.begin() ; it!=valueMap.end() ; it++) {
+    float current_val = (*it).first;
+    if (thresh < 0) {
+      thresh = current_val * scale;
+    }
+    if (current_val < thresh) {
+      candidates.push_back((*it).second);
+    }
+  }
+
+  Image best_match = source[candidates[rand() % candidates.size()]];
+
+  /*for (int k = 0; k < input.c; k++) {
+    float diff = 0.0;
+    for (int j = 0; j < input.h; j++) {
+      for (int i = 0; i < input.w; i++) {
+        diff += best_match(i, j, k) == 0 ? 0 : input(i, j, k) / best_match(i, j, k);
+      }
+    }
+    scale_image(best_match, k, diff / (input.h * input.w));
+  }*/
+
+  // scale image
+  return best_match;//source[best_index];
 }
 
 int main(int argc, char **argv) {
@@ -181,6 +214,20 @@ int main(int argc, char **argv) {
 
   scale_images(source, mosaicSize, squash);
 
+  vector<Image> source_dx;
+  vector<Image> source_dy;
+  Image gx_filter = make_gx_filter();
+  Image gy_filter = make_gy_filter();
+
+  for (int i = 0; i < source.size(); i++) {
+    source_dx.push_back(convolve_image(source[i], gx_filter, 1));
+    source_dy.push_back(convolve_image(source[i], gy_filter, 1));
+  }
+
+  Image input_dx = convolve_image(input, gx_filter, 1);
+  Image input_dy = convolve_image(input, gy_filter, 1);
+  printf("Computed image derivatives\n");
+
   uint32_t processed = 0;
   uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
   //vector <unique_ptr<thread>> th;
@@ -189,22 +236,26 @@ int main(int argc, char **argv) {
       // <parallelize>
 
       //th.emplace_back(new thread([&, x, y]() {
-      Image piece(mosaicSize, mosaicSize, input.c);
-
+      Image input_section(mosaicSize, mosaicSize, input.c);
+      Image input_section_dx(mosaicSize, mosaicSize, input.c);
+      Image input_section_dy(mosaicSize, mosaicSize, input.c);
       for (int k = 0; k < input.c; k++) {
         for (int j = 0; j < mosaicSize; j++) {
           for (int i = 0; i < mosaicSize; i++) {
-            piece(i, j, k) = input(x * mosaicSize + i, y * mosaicSize + j, k);
+            input_section(i, j, k) = input(x * mosaicSize + i, y * mosaicSize + j, k);
+            input_section_dx(i, j, k) = input_dx(x * mosaicSize + i, y * mosaicSize + j, k);
+            input_section_dy(i, j, k) = input_dy(x * mosaicSize + i, y * mosaicSize + j, k);
           }
         }
       }
 
-      piece = search_for_match(piece, source);
+      Image result = search_for_match(input_section, input_section_dx,
+        input_section_dy, source, source_dx, source_dy);
 
       for (int k = 0; k < input.c; k++) {
         for (int j = 0; j < mosaicSize; j++) {
           for (int i = 0; i < mosaicSize; i++) {
-            input(x * mosaicSize + i, y * mosaicSize + j, k) = piece(i, j, k);
+            input(x * mosaicSize + i, y * mosaicSize + j, k) = result(i, j, k);
           }
         }
       }
