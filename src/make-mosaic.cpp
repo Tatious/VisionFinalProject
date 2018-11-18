@@ -101,6 +101,7 @@ void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
         }
       }
       im[i] = bilinear_resize(square, mosaicSize, mosaicSize);
+      rgb_to_hsv(im[i]);
     }
     // </parallelize>
   }
@@ -142,16 +143,19 @@ float l2_distance(Image& a, Image& b) {
 Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
   vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
 
-  float scale = 1.5;
+  float scale = 1.7;
+  float derivative_scale = 0.25;
 
   uint32_t best_index = 0;
   float best_val = std::numeric_limits<float>::infinity();
 
   multimap<float, int> valueMap;
+
+  // Sort the matches
   for (int i = 0; i < source.size(); i++) {
     float temp_val_raw = l2_distance(input, source[i]);
-    float temp_val_dx =  l2_distance(input_dx, source_dx[i]);
-    float temp_val_dy =  l2_distance(input_dy, source_dy[i]);
+    float temp_val_dx = l2_distance(input_dx, source_dx[i]) * derivative_scale;
+    float temp_val_dy = l2_distance(input_dy, source_dy[i]) * derivative_scale;
 
     float temp_val_sum = temp_val_raw + temp_val_dx + temp_val_dy;
     valueMap.insert(std::pair<float, int>(temp_val_sum, i));
@@ -161,6 +165,7 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
     }
   }
 
+  // Pick the ones within the threshold of the best
   vector<int> candidates;
   float thresh = -1.f;
   map<float,int> :: iterator it;
@@ -173,21 +178,18 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
       candidates.push_back((*it).second);
     }
   }
-
   Image best_match = source[candidates[rand() % candidates.size()]];
 
-  /*for (int k = 0; k < input.c; k++) {
-    float diff = 0.0;
-    for (int j = 0; j < input.h; j++) {
-      for (int i = 0; i < input.w; i++) {
-        diff += best_match(i, j, k) == 0 ? 0 : input(i, j, k) / best_match(i, j, k);
-      }
+  // Scale the Hue
+  float diff = 0.0;
+  for (int j = 0; j < input.h; j++) {
+    for (int i = 0; i < input.w; i++) {
+      diff += best_match(i, j, 0) == 0 ? 0 : fmod(input(i, j, 0) / best_match(i, j, 0), 1.0);
     }
-    scale_image(best_match, k, diff / (input.h * input.w));
-  }*/
+  }
+  scale_image(best_match, 0, diff / (input.h * input.w));
 
-  // scale image
-  return best_match;//source[best_index];
+  return best_match;
 }
 
 int main(int argc, char **argv) {
@@ -210,6 +212,7 @@ int main(int argc, char **argv) {
   bool squash = (bool) atoi(argv[4]);
 
   Image input = scale_image(load_image(string(argv[2])), mosaicSize);
+  rgb_to_hsv(input);
   printf("Loaded %d x %d input image\n", input.w, input.h);
 
   scale_images(source, mosaicSize, squash);
@@ -268,7 +271,7 @@ int main(int argc, char **argv) {
     }
   }
   //for (auto&e1:th)e1->join();th.clear();
-
+  hsv_to_rgb(input);
   save_png(input, "output/" + output);
 
   return 0;
