@@ -70,42 +70,57 @@ void load_images(vector<Image>& im, char* indir) {
   }
 }
 
-void scale_images(vector<Image>& im, int16_t mosaicSize, bool squash) {
-  for (unsigned i=0; i < im.size(); i++) {
-    // <parallelize>
-    if (squash) {
-      im[i] = bilinear_resize(im[i], mosaicSize, mosaicSize);
-    } else {
-      uint32_t sideLen = min(im[i].w, im[i].h);
-      Image square(sideLen, sideLen, im[i].c);
+map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
+  int16_t mosaicSize, uint8_t levels, bool squash) {
+  map<uint8_t, vector<Image>> mapping;
 
-      uint32_t xLower = 0;
-      uint32_t xUpper = im[i].w;
-      uint32_t yLower = 0;
-      uint32_t yUpper = im[i].h;
+  for (int level = 0; level < levels; level++) {
 
-      if (im[i].w != sideLen) {
-        xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
-        xUpper -= (uint32_t) ceil((xUpper - sideLen) / 2.f);
-      }
-      if (im[i].h != sideLen) {
-        yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
-        yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
-      }
+    int16_t internalMosaic = pow(2, level) * mosaicSize;
+    vector<Image> images;
 
-      for (int k = 0; k < im[i].c; k++) {
-        for (int y = yLower; y < yUpper; y++) {
-          for (int x = xLower; x < xUpper; x++) {
-            square(x - xLower, y - yLower, k) = im[i](x, y, k);
+    for (unsigned i = 0; i < im.size(); i++) {
+      // <parallelize>
+      if (squash) {
+        Image temp = bilinear_resize(im[i], internalMosaic, internalMosaic);
+        rgb_to_hsv(temp);
+        images.push_back(temp);
+      } else {
+        uint32_t sideLen = min(im[i].w, im[i].h);
+        Image square(sideLen, sideLen, im[i].c);
+
+        uint32_t xLower = 0;
+        uint32_t xUpper = im[i].w;
+        uint32_t yLower = 0;
+        uint32_t yUpper = im[i].h;
+
+        if (im[i].w != sideLen) {
+          xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
+          xUpper -= (uint32_t) ceil((xUpper - sideLen) / 2.f);
+        }
+        if (im[i].h != sideLen) {
+          yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
+          yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
+        }
+
+        for (int k = 0; k < im[i].c; k++) {
+          for (int y = yLower; y < yUpper; y++) {
+            for (int x = xLower; x < xUpper; x++) {
+              square(x - xLower, y - yLower, k) = im[i](x, y, k);
+            }
           }
         }
+        Image temp = bilinear_resize(square, internalMosaic, internalMosaic);
+        rgb_to_hsv(temp);
+        images.push_back(temp);
       }
-      im[i] = bilinear_resize(square, mosaicSize, mosaicSize);
-      rgb_to_hsv(im[i]);
+      // </parallelize>
     }
-    // </parallelize>
+    mapping[internalMosaic] = images;
+    printf("Scaled source images to %d x %d\n", internalMosaic, internalMosaic);
   }
-  printf("Scaled source images to %d x %d\n", mosaicSize, mosaicSize);
+
+  return mapping;
 }
 
 Image scale_image(Image im, int16_t mosaicSize) {
@@ -182,58 +197,80 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
 
   // Scale the Hue
   float diff = 0.0;
+  float sat = 0.0;
   for (int j = 0; j < input.h; j++) {
     for (int i = 0; i < input.w; i++) {
-      diff += best_match(i, j, 0) == 0 ? 0 : fmod(input(i, j, 0) / best_match(i, j, 0), 1.0);
+      diff += best_match(i, j, 0) == 0 ? 0 : input(i, j, 0) / best_match(i, j, 0);
+      sat += input(i, j, 1);
     }
   }
-  scale_image(best_match, 0, diff / (input.h * input.w));
+
+  scale_image(best_match, 0, diff);
 
   return best_match;
 }
 
 int main(int argc, char **argv) {
 
-  if (argc != 6) {
-    printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <mosaicSize>");
-    printf(" <squash?> <outputImg>\n");
+  if (argc != 7) {
+    printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <outputImg> <mosaicSize>");
+    printf(" <levels> <squash?> \n");
     return 0;
   }
-  string output = string(argv[5]);
+  string output = string(argv[3]);
 
   vector<Image> source;
   load_images(source, argv[1]);
 
-  int16_t mosaicSize = (int16_t) atoi(argv[3]);
+  int16_t mosaicSize = (int16_t) atoi(argv[4]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
     exit(0);
   }
-  bool squash = (bool) atoi(argv[4]);
+
+  int8_t levels = (int8_t) atoi(argv[5]);
+  if (levels <= 0 && levels > 8) {
+    fprintf(stderr, "ERROR: levels must be > 0 and <= 8.");
+    exit(0);
+  }
+  bool squash = (bool) atoi(argv[6]);
 
   Image input = scale_image(load_image(string(argv[2])), mosaicSize);
   rgb_to_hsv(input);
   printf("Loaded %d x %d input image\n", input.w, input.h);
 
-  scale_images(source, mosaicSize, squash);
+  map<uint8_t, vector<Image>> mapping =
+                              scale_images(source, mosaicSize, levels, squash);
 
-  vector<Image> source_dx;
-  vector<Image> source_dy;
+
+  map<uint8_t, vector<Image>> mapping_dx;
+  map<uint8_t, vector<Image>> mapping_dy;
   Image gx_filter = make_gx_filter();
   Image gy_filter = make_gy_filter();
 
-  for (int i = 0; i < source.size(); i++) {
-    source_dx.push_back(convolve_image(source[i], gx_filter, 1));
-    source_dy.push_back(convolve_image(source[i], gy_filter, 1));
+  for (const auto& kv : mapping) {
+    vector<Image> source_dx;
+    vector<Image> source_dy;
+    for (int i = 0; i < kv.second.size(); i++) {
+      source_dx.push_back(convolve_image(source[i], gx_filter, 1));
+      source_dy.push_back(convolve_image(source[i], gy_filter, 1));
+    }
+    mapping_dx[kv.first] = source_dx;
+    mapping_dy[kv.first] = source_dy;
   }
+
+
 
   Image input_dx = convolve_image(input, gx_filter, 1);
   Image input_dy = convolve_image(input, gy_filter, 1);
   printf("Computed image derivatives\n");
 
+
   uint32_t processed = 0;
   uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
   //vector <unique_ptr<thread>> th;
+
+  /*
   for (int y = 0; y < input.h / mosaicSize; y++) {
     for (int x = 0; x < input.w / mosaicSize; x++) {
       // <parallelize>
@@ -264,12 +301,17 @@ int main(int argc, char **argv) {
       }
       //mtx.lock();
       processed++;
-      printf("%d / %d processed\n", processed, total);
+      if (!(processed % 10)) {
+        printf("%d / %d processed\n", processed, total);
+      }
+
       //mtx.unlock();
       //}));
       // </parallelize>
     }
   }
+  */
+  
   //for (auto&e1:th)e1->join();th.clear();
   hsv_to_rgb(input);
   save_png(input, "output/" + output);
