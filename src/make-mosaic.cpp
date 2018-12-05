@@ -74,7 +74,7 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
   int16_t mosaicSize, uint8_t levels, bool squash) {
   map<uint8_t, vector<Image>> mapping;
 
-  for (int level = 0; level < levels; level++) {
+  for (uint32_t level = 0; level < levels; level++) {
 
     int16_t internalMosaic = pow(2, level) * mosaicSize;
     vector<Image> images;
@@ -103,9 +103,9 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
           yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
         }
 
-        for (int k = 0; k < im[i].c; k++) {
-          for (int y = yLower; y < yUpper; y++) {
-            for (int x = xLower; x < xUpper; x++) {
+        for (uint32_t k = 0; k < im[i].c; k++) {
+          for (uint32_t y = yLower; y < yUpper; y++) {
+            for (uint32_t x = xLower; x < xUpper; x++) {
               square(x - xLower, y - yLower, k) = im[i](x, y, k);
             }
           }
@@ -132,9 +132,9 @@ Image scale_image(Image im, int16_t mosaicSize) {
 float l1_distance(Image& a, Image& b) {
   float sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
-  for (int k = 0; k < a.c; k++) {
-    for (int j = 0; j < a.h; j++) {
-      for (int i = 0; i < a.w; i++) {
+  for (uint32_t k = 0; k < a.c; k++) {
+    for (uint32_t j = 0; j < a.h; j++) {
+      for (uint32_t i = 0; i < a.w; i++) {
         sum += fabs(a(i, j, k) - b(i, j, k));
       }
     }
@@ -145,9 +145,9 @@ float l1_distance(Image& a, Image& b) {
 float l2_distance(Image& a, Image& b) {
   float sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
-  for (int k = 0; k < a.c; k++) {
-    for (int j = 0; j < a.h; j++) {
-      for (int i = 0; i < a.w; i++) {
+  for (uint32_t k = 0; k < a.c; k++) {
+    for (uint32_t j = 0; j < a.h; j++) {
+      for (uint32_t i = 0; i < a.w; i++) {
         sum += pow(a(i, j, k) - b(i, j, k), 2);
       }
     }
@@ -155,7 +155,24 @@ float l2_distance(Image& a, Image& b) {
   return sum;
 }
 
-Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
+vector<int32_t> image_to_histogram(Image& im) {
+  vector<int32_t> histogram;
+  return histogram;
+}
+
+Image histogram_scale(Image& im, vector<uint32_t> original, vector<uint32_t> to_match){
+
+  return im;
+
+}
+
+
+uint32_t search_for_fast_match(vector<uint32_t>& image_hist,
+                                        vector<vector<uint32_t>> source_hist) {
+  return 0;
+}
+
+uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
 
   float scale = 1.7;
@@ -164,16 +181,16 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
   uint32_t best_index = 0;
   float best_val = std::numeric_limits<float>::infinity();
 
-  multimap<float, int> valueMap;
+  multimap<float, uint32_t> valueMap;
 
   // Sort the matches
-  for (int i = 0; i < source.size(); i++) {
+  for (uint32_t i = 0; i < source.size(); i++) {
     float temp_val_raw = l2_distance(input, source[i]);
     float temp_val_dx = l2_distance(input_dx, source_dx[i]) * derivative_scale;
     float temp_val_dy = l2_distance(input_dy, source_dy[i]) * derivative_scale;
 
     float temp_val_sum = temp_val_raw + temp_val_dx + temp_val_dy;
-    valueMap.insert(std::pair<float, int>(temp_val_sum, i));
+    valueMap.insert(std::pair<float, uint32_t>(temp_val_sum, i));
     if (temp_val_sum < best_val) {
       best_index = i;
       best_val = temp_val_sum;
@@ -181,10 +198,10 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
   }
 
   // Pick the ones within the threshold of the best
-  vector<int> candidates;
+  vector<uint32_t> candidates;
   float thresh = -1.f;
-  map<float,int> :: iterator it;
-  for (it=valueMap.begin() ; it!=valueMap.end() ; it++) {
+  map<float,uint32_t>::iterator it;
+  for (it = valueMap.begin(); it != valueMap.end(); it++) {
     float current_val = (*it).first;
     if (thresh < 0) {
       thresh = current_val * scale;
@@ -195,19 +212,7 @@ Image search_for_match(Image& input, Image& input_dx, Image& input_dy,
   }
   Image best_match = source[candidates[rand() % candidates.size()]];
 
-  // Scale the Hue
-  float diff = 0.0;
-  float sat = 0.0;
-  for (int j = 0; j < input.h; j++) {
-    for (int i = 0; i < input.w; i++) {
-      diff += best_match(i, j, 0) == 0 ? 0 : input(i, j, 0) / best_match(i, j, 0);
-      sat += input(i, j, 1);
-    }
-  }
-
-  scale_image(best_match, 0, diff);
-
-  return best_match;
+  return candidates[rand() % candidates.size()];
 }
 
 int main(int argc, char **argv) {
@@ -251,7 +256,7 @@ int main(int argc, char **argv) {
   for (const auto& kv : mapping) {
     vector<Image> source_dx;
     vector<Image> source_dy;
-    for (int i = 0; i < kv.second.size(); i++) {
+    for (uint32_t i = 0; i < kv.second.size(); i++) {
       source_dx.push_back(convolve_image(source[i], gx_filter, 1));
       source_dy.push_back(convolve_image(source[i], gy_filter, 1));
     }
@@ -268,6 +273,17 @@ int main(int argc, char **argv) {
 
   uint32_t processed = 0;
   uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
+
+
+  // TODO: Compute Image Histograms
+
+  // map from int (window size) to vector of ints (image indices)
+
+  // for each window size, loop properly through window based on size, add to map vector
+
+  // build together images and scale them properly based on histogram matching
+
+
   //vector <unique_ptr<thread>> th;
 
   /*
@@ -311,8 +327,10 @@ int main(int argc, char **argv) {
     }
   }
   */
-  
+
   //for (auto&e1:th)e1->join();th.clear();
+
+
   hsv_to_rgb(input);
   save_png(input, "output/" + output);
 
