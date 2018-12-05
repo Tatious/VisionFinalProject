@@ -71,7 +71,7 @@ void load_images(vector<Image>& im, char* indir) {
 }
 
 map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
-  int16_t mosaicSize, uint8_t levels, bool squash) {
+  uint8_t mosaicSize, uint8_t levels, bool squash) {
   map<uint8_t, vector<Image>> mapping;
 
   for (uint32_t level = 0; level < levels; level++) {
@@ -83,7 +83,6 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
       // <parallelize>
       if (squash) {
         Image temp = bilinear_resize(im[i], internalMosaic, internalMosaic);
-        rgb_to_hsv(temp);
         images.push_back(temp);
       } else {
         uint32_t sideLen = min(im[i].w, im[i].h);
@@ -111,7 +110,6 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
           }
         }
         Image temp = bilinear_resize(square, internalMosaic, internalMosaic);
-        rgb_to_hsv(temp);
         images.push_back(temp);
       }
       // </parallelize>
@@ -123,7 +121,7 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
   return mapping;
 }
 
-Image scale_image(Image im, int16_t mosaicSize) {
+Image scale_image(Image im, uint8_t mosaicSize) {
 
   return bilinear_resize(im, im.w / mosaicSize * mosaicSize,
     im.h / mosaicSize * mosaicSize);
@@ -156,12 +154,15 @@ float l2_distance(Image& a, Image& b) {
 }
 
 vector<int32_t> image_to_histogram(Image& im) {
+  // TODO
   vector<int32_t> histogram;
   return histogram;
 }
 
-Image histogram_scale(Image& im, vector<uint32_t> original, vector<uint32_t> to_match){
 
+Image histogram_scale(Image& im, vector<uint32_t> original,
+                                                    vector<uint32_t> to_match){
+  // TODO
   return im;
 
 }
@@ -169,6 +170,7 @@ Image histogram_scale(Image& im, vector<uint32_t> original, vector<uint32_t> to_
 
 uint32_t search_for_fast_match(vector<uint32_t>& image_hist,
                                         vector<vector<uint32_t>> source_hist) {
+  // TODO
   return 0;
 }
 
@@ -217,37 +219,80 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
 
 int main(int argc, char **argv) {
 
-  if (argc != 7) {
-    printf("USAGE: ./make-mosaic <sourceDir> <inputImg> <outputImg> <mosaicSize>");
-    printf(" <levels> <squash?> \n");
+  // Get input parameters
+  if (argc != 9) {
+    printf("USAGE: ./make-mosaic <mosaicSize> <levels> <scalePercent>");
+    printf(" <squash?> <matchMethod> <sourceDir> <inputImg> <outputImg> \n");
     return 0;
   }
-  string output = string(argv[3]);
 
-  vector<Image> source;
-  load_images(source, argv[1]);
 
-  int16_t mosaicSize = (int16_t) atoi(argv[4]);
+  // Get the base mosaic size we want
+  uint8_t mosaicSize = (uint8_t) atoi(argv[1]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
     exit(0);
   }
+  printf("Mosaic with a base tile size = %d x %d\n", mosaicSize, mosaicSize);
 
-  int8_t levels = (int8_t) atoi(argv[5]);
+
+  // Get how many levels of different sizes we want
+  int8_t levels = (int8_t) atoi(argv[2]);
   if (levels <= 0 && levels > 8) {
     fprintf(stderr, "ERROR: levels must be > 0 and <= 8.");
     exit(0);
   }
-  bool squash = (bool) atoi(argv[6]);
+  printf("Number of larger mosaic levels = %d\n", levels);
 
-  Image input = scale_image(load_image(string(argv[2])), mosaicSize);
-  rgb_to_hsv(input);
+
+  // Get scale factor: This determines what percent of mosaic area is made of
+  // the next levels up from the current level
+  double scaleFactor = atof(argv[3]);
+  if (scaleFactor > 1 || scaleFactor <= 0) {
+    fprintf(stderr, "ERROR: scale percent must be > 0 && < 1");
+    exit(0);
+  }
+  printf("Level scale factor = %f\n", scaleFactor);
+
+
+  // Get how we want to scale the image, 0 = crop, 1 = squash
+  bool squash = (bool) atoi(argv[4]);
+  printf(squash ? "Squashing source images\n" : "Cropping source images\n");
+
+
+  // Get match type
+  uint8_t matchMethod = (uint8_t) atoi(argv[5]);
+  if (matchMethod > 3) {
+    fprintf(stderr, "ERROR: match method must be 0=exact, 1=derivative, 2=exact+derivative, or 3=histogram.");
+    exit(0);
+  }
+  printf("Match type = %s\n", matchMethod == 0 ? "Exact" : matchMethod == 1 ? "Derivative"
+        : matchMethod == 2 ? "Exact + Derivative" : "Histogram");
+
+
+  // Get normal source images
+  vector<Image> source;
+  load_images(source, argv[6]);
+  printf("Loaded %lu source images\n", source.size());
+
+
+  // Get input image to make into mosaic
+  Image input = scale_image(load_image(string(argv[7])), mosaicSize);
   printf("Loaded %d x %d input image\n", input.w, input.h);
 
+
+  // Get output file name
+  string output = string(argv[8]);
+  printf("Output file will be in output/%s.png\n", output.c_str());
+
+
+  // Scale images into different desired sizes
   map<uint8_t, vector<Image>> mapping =
                               scale_images(source, mosaicSize, levels, squash);
 
 
+  // TODO: only do this if matchMethod == 1 || matchMethod == 2
+  // Compute image derivatives for source images & input image
   map<uint8_t, vector<Image>> mapping_dx;
   map<uint8_t, vector<Image>> mapping_dy;
   Image gx_filter = make_gx_filter();
@@ -264,18 +309,26 @@ int main(int argc, char **argv) {
     mapping_dy[kv.first] = source_dy;
   }
 
-
-
   Image input_dx = convolve_image(input, gx_filter, 1);
   Image input_dy = convolve_image(input, gy_filter, 1);
   printf("Computed image derivatives\n");
 
 
+  // TODO: only do this if matchMethod == 3
+  // Compute image histograms
+  map<uint32_t, vector<vector<uint32_t>>> histogram_map;
+
+
+  // TODO: Recompute this for mutliple levels
   uint32_t processed = 0;
   uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
 
 
-  // TODO: Compute Image Histograms
+
+
+
+
+  // TODO: Compute Image Histograms: window size -> vector of histograms (vector of uint32_t)
 
   // map from int (window size) to vector of ints (image indices)
 
@@ -331,7 +384,6 @@ int main(int argc, char **argv) {
   //for (auto&e1:th)e1->join();th.clear();
 
 
-  hsv_to_rgb(input);
   save_png(input, "output/" + output);
 
   return 0;
