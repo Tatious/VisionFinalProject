@@ -70,9 +70,9 @@ void load_images(vector<Image>& im, char* indir) {
   }
 }
 
-map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
-  uint8_t mosaicSize, uint8_t levels, bool squash) {
-  map<uint8_t, vector<Image>> mapping;
+map<uint16_t, vector<Image>> scale_images(vector<Image>& im,
+  uint16_t mosaicSize, uint8_t levels, bool squash) {
+  map<uint16_t, vector<Image>> mapping;
 
   for (uint32_t level = 0; level < levels; level++) {
 
@@ -121,7 +121,7 @@ map<uint8_t, vector<Image>> scale_images(vector<Image>& im,
   return mapping;
 }
 
-Image scale_image(Image im, uint8_t mosaicSize) {
+Image scale_image(Image im, uint16_t mosaicSize) {
 
   return bilinear_resize(im, im.w / mosaicSize * mosaicSize,
     im.h / mosaicSize * mosaicSize);
@@ -153,9 +153,9 @@ float l2_distance(Image& a, Image& b) {
   return sum;
 }
 
-vector<int32_t> image_to_histogram(Image& im) {
+vector<uint32_t> image_to_histogram(const Image& im) {
   // TODO
-  vector<int32_t> histogram;
+  vector<uint32_t> histogram;
   return histogram;
 }
 
@@ -167,12 +167,6 @@ Image histogram_scale(Image& im, vector<uint32_t> original,
 
 }
 
-
-uint32_t search_for_fast_match(vector<uint32_t>& image_hist,
-                                        vector<vector<uint32_t>> source_hist) {
-  // TODO
-  return 0;
-}
 
 uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
@@ -217,6 +211,25 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   return candidates[rand() % candidates.size()];
 }
 
+
+uint32_t search_for_dxy_match(Image& input, Image& input_dx, Image& input_dy,
+  vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
+
+}
+
+  uint32_t search_for_exact_dxy_match(Image& input, Image& input_dx, Image& input_dy,
+    vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
+
+}
+
+
+uint32_t search_for_fast_match(vector<uint32_t>& image_hist,
+                                        vector<vector<uint32_t>> source_hist) {
+  // TODO
+  return 0;
+}
+
+
 int main(int argc, char **argv) {
 
   // Get input parameters
@@ -228,7 +241,7 @@ int main(int argc, char **argv) {
 
 
   // Get the base mosaic size we want
-  uint8_t mosaicSize = (uint8_t) atoi(argv[1]);
+  uint16_t mosaicSize = (uint16_t) atoi(argv[1]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
     exit(0);
@@ -287,54 +300,105 @@ int main(int argc, char **argv) {
 
 
   // Scale images into different desired sizes
-  map<uint8_t, vector<Image>> mapping =
+  map<uint16_t, vector<Image>> mapping =
                               scale_images(source, mosaicSize, levels, squash);
 
 
-  // TODO: only do this if matchMethod == 1 || matchMethod == 2
   // Compute image derivatives for source images & input image
-  map<uint8_t, vector<Image>> mapping_dx;
-  map<uint8_t, vector<Image>> mapping_dy;
-  Image gx_filter = make_gx_filter();
-  Image gy_filter = make_gy_filter();
+  map<uint16_t, vector<Image>> mapping_dx;
+  map<uint16_t, vector<Image>> mapping_dy;
+  Image input_dx;
+  Image input_dy;
 
-  for (const auto& kv : mapping) {
-    vector<Image> source_dx;
-    vector<Image> source_dy;
-    for (uint32_t i = 0; i < kv.second.size(); i++) {
-      source_dx.push_back(convolve_image(source[i], gx_filter, 1));
-      source_dy.push_back(convolve_image(source[i], gy_filter, 1));
+  if (matchMethod == 1 || matchMethod == 2) {
+    Image gx_filter = make_gx_filter();
+    Image gy_filter = make_gy_filter();
+
+    for (const auto& kv : mapping) {
+      vector<Image> source_dx;
+      vector<Image> source_dy;
+      for (uint32_t i = 0; i < kv.second.size(); i++) {
+        source_dx.push_back(convolve_image(source[i], gx_filter, 1));
+        source_dy.push_back(convolve_image(source[i], gy_filter, 1));
+      }
+      mapping_dx[kv.first] = source_dx;
+      mapping_dy[kv.first] = source_dy;
+      printf("Computed image derivatives for %d x %d source images\n", kv.first, kv.first);
     }
-    mapping_dx[kv.first] = source_dx;
-    mapping_dy[kv.first] = source_dy;
+
+    input_dx = convolve_image(input, gx_filter, 1);
+    input_dy = convolve_image(input, gy_filter, 1);
+    printf("Computed image derivative for input image\n");
   }
 
-  Image input_dx = convolve_image(input, gx_filter, 1);
-  Image input_dy = convolve_image(input, gy_filter, 1);
-  printf("Computed image derivatives\n");
 
-
-  // TODO: only do this if matchMethod == 3
+  vector<uint16_t> scales;
   // Compute image histograms
-  map<uint32_t, vector<vector<uint32_t>>> histogram_map;
+  map<uint16_t, vector<vector<uint32_t>>> histogramMap;
+  for (const auto& kv : mapping) {
+    scales.push_back(kv.first);
+    vector<vector<uint32_t>> histograms;
+    for (uint32_t i = 0; i < kv.second.size(); i++) {
+      histograms.push_back(image_to_histogram(kv.second[i]));
+    }
+    histogramMap[kv.first] = histograms;
+    printf("Computed image histograms for %d x %d source images\n", kv.first, kv.first);
+  }
 
 
-  // TODO: Recompute this for mutliple levels
-  uint32_t processed = 0;
-  uint32_t total = input.h * input.w / (mosaicSize * mosaicSize);
+  map<uint16_t, vector<uint32_t>> resultMap;
+  for (auto& kv : scales) {
+    printf("Processing mosaic window %d x %d\n", kv, kv);
+    uint32_t processed = 0;
+    uint32_t total = input.h * input.w / (kv * kv);
+
+    for (int y = 0; y < input.h / kv; y++) {
+      for (int x = 0; x < input.w / kv; x++) {
+        Image input_section(kv, kv, input.c);
+        Image input_section_dx(kv, kv, input.c);
+        Image input_section_dy(kv, kv, input.c);
+
+        for (int k = 0; k < input.c; k++) {
+          for (int j = 0; j < kv; j++) {
+            for (int i = 0; i < kv; i++) {
+
+              input_section(i, j, k) = input(x * kv + i, y * kv + j, k);
+              if (matchMethod == 1 || matchMethod == 2) {
+                input_section_dx(i, j, k) = input_dx(x * kv + i, y * kv + j, k);
+                input_section_dy(i, j, k) = input_dy(x * kv + i, y * kv + j, k);
+              }
+
+            }
+          }
+        }
+
+        uint32_t result;
+        if (matchMethod == 0) {
+
+        } else if (matchMethod == 1) {
+
+        } else if (matchMethod == 2) {
+
+        } else if (matchMethod == 3) {
+
+        }
+        // Append to resultMap
+        Image result = search_for_match(input_section, input_section_dx,
+          input_section_dy, source, source_dx, source_dy);
 
 
+        processed++;
+        if (!(processed % 10)) {
+          printf("%d / %d processed\n", processed, total);
+        }
+      }
+    }
+  }
 
 
+  // TODO: Put images back together & scale them accordingly
 
 
-  // TODO: Compute Image Histograms: window size -> vector of histograms (vector of uint32_t)
-
-  // map from int (window size) to vector of ints (image indices)
-
-  // for each window size, loop properly through window based on size, add to map vector
-
-  // build together images and scale them properly based on histogram matching
 
 
   //vector <unique_ptr<thread>> th;
