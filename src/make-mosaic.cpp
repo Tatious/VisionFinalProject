@@ -169,9 +169,11 @@ Image histogram_scale(Image& im, vector<uint32_t> original,
 
 
 uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
-  vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
+  vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy, uint8_t mode) {
 
+  // Threshold for worse results being selected for a bit of interesing noise
   float scale = 1.7;
+  // Value of derivative for select
   float derivative_scale = 0.25;
 
   uint32_t best_index = 0;
@@ -181,11 +183,11 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
 
   // Sort the matches
   for (uint32_t i = 0; i < source.size(); i++) {
-    float temp_val_raw = l2_distance(input, source[i]);
-    float temp_val_dx = l2_distance(input_dx, source_dx[i]) * derivative_scale;
-    float temp_val_dy = l2_distance(input_dy, source_dy[i]) * derivative_scale;
+    float temp_val_raw = mode == 1 ? 0 : l2_distance(input, source[i]);
+    float temp_val_dx = mode == 0 ? 0 : l2_distance(input_dx, source_dx[i]) * derivative_scale;
+    float temp_val_dy = mode == 0 ? 0 : l2_distance(input_dy, source_dy[i]) * derivative_scale;
 
-    float temp_val_sum = temp_val_raw + temp_val_dx + temp_val_dy;
+    float temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
     valueMap.insert(std::pair<float, uint32_t>(temp_val_sum, i));
     if (temp_val_sum < best_val) {
       best_index = i;
@@ -206,20 +208,8 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
       candidates.push_back((*it).second);
     }
   }
-  Image best_match = source[candidates[rand() % candidates.size()]];
 
   return candidates[rand() % candidates.size()];
-}
-
-
-uint32_t search_for_dxy_match(Image& input, Image& input_dx, Image& input_dy,
-  vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
-
-}
-
-  uint32_t search_for_exact_dxy_match(Image& input, Image& input_dx, Image& input_dy,
-    vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy) {
-
 }
 
 
@@ -357,6 +347,7 @@ int main(int argc, char **argv) {
         Image input_section(kv, kv, input.c);
         Image input_section_dx(kv, kv, input.c);
         Image input_section_dy(kv, kv, input.c);
+        vector<uint32_t> input_histogram = image_to_histogram(input_section);
 
         for (int k = 0; k < input.c; k++) {
           for (int j = 0; j < kv; j++) {
@@ -372,20 +363,10 @@ int main(int argc, char **argv) {
           }
         }
 
-        uint32_t result;
-        if (matchMethod == 0) {
-
-        } else if (matchMethod == 1) {
-
-        } else if (matchMethod == 2) {
-
-        } else if (matchMethod == 3) {
-
-        }
-        // Append to resultMap
-        Image result = search_for_match(input_section, input_section_dx,
-          input_section_dy, source, source_dx, source_dy);
-
+        uint32_t result = matchMethod == 3
+          ? search_for_fast_match(input_histogram, histogramMap[kv])
+          : search_for_exact_match(input_section, input_section_dx,
+              input_section_dy, mapping[kv], mapping_dx[kv], mapping_dy[kv], matchMethod);
 
         processed++;
         if (!(processed % 10)) {
