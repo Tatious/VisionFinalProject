@@ -127,8 +127,8 @@ Image scale_image(Image im, uint16_t mosaicSize) {
     im.h / mosaicSize * mosaicSize);
 }
 
-float l1_distance(Image& a, Image& b) {
-  float sum = 0.0;
+double l1_distance(Image& a, Image& b) {
+  double sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
     for (uint32_t j = 0; j < a.h; j++) {
@@ -140,8 +140,8 @@ float l1_distance(Image& a, Image& b) {
   return sum;
 }
 
-float l2_distance(Image& a, Image& b) {
-  float sum = 0.0;
+double l2_distance(Image& a, Image& b) {
+  double sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
     for (uint32_t j = 0; j < a.h; j++) {
@@ -168,27 +168,26 @@ Image histogram_scale(Image& im, vector<uint32_t> original,
 }
 
 
-uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
+pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy, uint8_t mode) {
 
   // Threshold for worse results being selected for a bit of interesing noise
-  float scale = 1.7;
+  double scale = 1.7;
   // Value of derivative for select
-  float derivative_scale = 0.25;
+  double derivative_scale = 0.25;
 
   uint32_t best_index = 0;
-  float best_val = std::numeric_limits<float>::infinity();
+  double best_val = std::numeric_limits<float>::infinity();
 
-  multimap<float, uint32_t> valueMap;
-
+  multimap<double, uint32_t> valueMap;
   // Sort the matches
   for (uint32_t i = 0; i < source.size(); i++) {
-    float temp_val_raw = mode == 1 ? 0 : l2_distance(input, source[i]);
-    float temp_val_dx = mode == 0 ? 0 : l2_distance(input_dx, source_dx[i]) * derivative_scale;
-    float temp_val_dy = mode == 0 ? 0 : l2_distance(input_dy, source_dy[i]) * derivative_scale;
+    double temp_val_raw = mode == 1 ? 0 : l2_distance(input, source[i]);
+    double temp_val_dx = mode == 0 ? 0 : l2_distance(input_dx, source_dx[i]) * derivative_scale;
+    double temp_val_dy = mode == 0 ? 0 : l2_distance(input_dy, source_dy[i]) * derivative_scale;
 
-    float temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
-    valueMap.insert(std::pair<float, uint32_t>(temp_val_sum, i));
+    double temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
+    valueMap.insert(pair<double, uint32_t>(temp_val_sum, i));
     if (temp_val_sum < best_val) {
       best_index = i;
       best_val = temp_val_sum;
@@ -196,16 +195,16 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   }
 
   // Pick the ones within the threshold of the best
-  vector<uint32_t> candidates;
-  float thresh = -1.f;
-  map<float,uint32_t>::iterator it;
+  vector<pair<uint32_t, double>> candidates;
+  double thresh = -1.f;
+  map<double,uint32_t>::iterator it;
   for (it = valueMap.begin(); it != valueMap.end(); it++) {
-    float current_val = (*it).first;
+    double current_val = (*it).first;
     if (thresh < 0) {
       thresh = current_val * scale;
     }
     if (current_val < thresh) {
-      candidates.push_back((*it).second);
+      candidates.push_back(pair<uint32_t, double>((*it).second, (*it).first));
     }
   }
 
@@ -213,10 +212,10 @@ uint32_t search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
 }
 
 
-uint32_t search_for_fast_match(vector<uint32_t>& image_hist,
+pair<uint32_t, double> search_for_fast_match(vector<uint32_t>& image_hist,
                                         vector<vector<uint32_t>> source_hist) {
   // TODO
-  return 0;
+  return pair<uint32_t, double> (0, 0.0);
 }
 
 
@@ -336,7 +335,7 @@ int main(int argc, char **argv) {
   }
 
 
-  map<uint16_t, vector<uint32_t>> resultMap;
+  map<uint16_t, vector<pair<uint32_t, double>>> resultMap;
   for (auto& kv : scales) {
     printf("Processing mosaic window %d x %d\n", kv, kv);
     uint32_t processed = 0;
@@ -358,15 +357,14 @@ int main(int argc, char **argv) {
                 input_section_dx(i, j, k) = input_dx(x * kv + i, y * kv + j, k);
                 input_section_dy(i, j, k) = input_dy(x * kv + i, y * kv + j, k);
               }
-
             }
           }
         }
 
-        uint32_t result = matchMethod == 3
+        resultMap[kv].push_back(matchMethod == 3
           ? search_for_fast_match(input_histogram, histogramMap[kv])
           : search_for_exact_match(input_section, input_section_dx,
-              input_section_dy, mapping[kv], mapping_dx[kv], mapping_dy[kv], matchMethod);
+              input_section_dy, mapping[kv], mapping_dx[kv], mapping_dy[kv], matchMethod));
 
         processed++;
         if (!(processed % 10)) {
@@ -378,55 +376,7 @@ int main(int argc, char **argv) {
 
 
   // TODO: Put images back together & scale them accordingly
-
-
-
-
-  //vector <unique_ptr<thread>> th;
-
-  /*
-  for (int y = 0; y < input.h / mosaicSize; y++) {
-    for (int x = 0; x < input.w / mosaicSize; x++) {
-      // <parallelize>
-
-      //th.emplace_back(new thread([&, x, y]() {
-      Image input_section(mosaicSize, mosaicSize, input.c);
-      Image input_section_dx(mosaicSize, mosaicSize, input.c);
-      Image input_section_dy(mosaicSize, mosaicSize, input.c);
-      for (int k = 0; k < input.c; k++) {
-        for (int j = 0; j < mosaicSize; j++) {
-          for (int i = 0; i < mosaicSize; i++) {
-            input_section(i, j, k) = input(x * mosaicSize + i, y * mosaicSize + j, k);
-            input_section_dx(i, j, k) = input_dx(x * mosaicSize + i, y * mosaicSize + j, k);
-            input_section_dy(i, j, k) = input_dy(x * mosaicSize + i, y * mosaicSize + j, k);
-          }
-        }
-      }
-
-      Image result = search_for_match(input_section, input_section_dx,
-        input_section_dy, source, source_dx, source_dy);
-
-      for (int k = 0; k < input.c; k++) {
-        for (int j = 0; j < mosaicSize; j++) {
-          for (int i = 0; i < mosaicSize; i++) {
-            input(x * mosaicSize + i, y * mosaicSize + j, k) = result(i, j, k);
-          }
-        }
-      }
-      //mtx.lock();
-      processed++;
-      if (!(processed % 10)) {
-        printf("%d / %d processed\n", processed, total);
-      }
-
-      //mtx.unlock();
-      //}));
-      // </parallelize>
-    }
-  }
-  */
-
-  //for (auto&e1:th)e1->join();th.clear();
+  
 
 
   save_png(input, "output/" + output);
