@@ -218,7 +218,55 @@ pair<uint32_t, double> search_for_fast_match(vector<uint32_t>& image_hist,
   return pair<uint32_t, double> (0, 0.0);
 }
 
-void threadMatch() {
+void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
+  uint16_t scale, uint8_t matchMethod, Image& input, Image& input_dx,
+  Image& input_dy, Image& outputImg, map<uint16_t, vector<Image> >& mapping,
+  map<uint16_t, vector<Image> >& mapping_dx, map<uint16_t, vector<Image> >& mapping_dy,
+  map<uint16_t, vector<vector<uint32_t> > >& histogramMap, uint32_t& processed,
+  vector<vector<uint32_t> >& originalHistograms,
+  vector<pair<pair<uint32_t, uint32_t>, double> >& results) {
+
+    if (outputImg(x * scale, y * scale, 0) == -1.5) {
+      Image input_section(scale, scale, input.c);
+      Image input_section_dx(scale, scale, input.c);
+      Image input_section_dy(scale, scale, input.c);
+      vector<uint32_t> input_histogram = image_to_histogram(input_section);
+
+      mtx.lock();
+      originalHistograms.push_back(input_histogram);
+      mtx.unlock();
+
+      for (int k = 0; k < input.c; k++) {
+        for (int j = 0; j < scale; j++) {
+          for (int i = 0; i < scale; i++) {
+            input_section(i, j, k) = input(x * scale + i, y * scale + j, k);
+            if (matchMethod == 1 || matchMethod == 2) {
+              input_section_dx(i, j, k) = input_dx(x * scale + i, y * scale + j, k);
+              input_section_dy(i, j, k) = input_dy(x * scale + i, y * scale + j, k);
+            }
+          }
+        }
+      }
+
+      pair<uint32_t, double> result = matchMethod == 3
+        ? search_for_fast_match(input_histogram, histogramMap[scale])
+        : search_for_exact_match(input_section, input_section_dx,
+            input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
+
+      pair<uint32_t, uint32_t> p1(idx, result.first);
+      pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
+
+      mtx.lock();
+      results.push_back(p2);
+      mtx.unlock();
+    }
+
+    mtx.lock();
+    processed++;
+    if (!(processed % 10)) {
+      printf("%d / %d processed\n", processed, total);
+    }
+    mtx.unlock();
 
 }
 
@@ -367,79 +415,23 @@ int main(int argc, char **argv) {
     uint32_t processed = 0;
     uint32_t total = input.h * input.w / (scale * scale);
 
+    std::thread t[(input.h / scale) * (input.w / scale)];
     uint32_t idx = 0;
     for (uint32_t y = 0; y < input.h / scale; y++) {
       for (uint32_t x = 0; x < input.w / scale; x++) {
 
-        // Start Multithreading: Need These Variables
-
-        //   Read Only
-        //   uint32_t x,
-        //   uint32_t y,
-        //   uint32_t idx,
-        //   uint16_t scale,
-        //   uint8_t matchMethod,
-        //   Image& input,
-        //   Image& input_dx,
-        //   Image& input_dy,
-        //   Image& outputImg,
-        //   map<uint16_t, vector<Image> > mapping,
-        //   map<uint16_t, vector<Image> > mapping_dx,
-        //   map<uint16_t, vector<Image> > mapping_dy,
-        //   map<uint16_t, vector<vector<uint32_t> > > histogramMap,
-
-        //   Read / Write
-        //   uint32_t processed,
-        //   vector<vector<uint32_t> > originalHistograms,
-        //   vector<pair<pair<uint32_t, uint32_t>, double> > results
-
-
-        if (outputImg(x * scale, y * scale, 0) == -1.5) {
-          Image input_section(scale, scale, input.c);
-          Image input_section_dx(scale, scale, input.c);
-          Image input_section_dy(scale, scale, input.c);
-          vector<uint32_t> input_histogram = image_to_histogram(input_section);
-          // Lock
-          originalHistograms.push_back(input_histogram);
-          // Unlock
-
-          for (int k = 0; k < input.c; k++) {
-            for (int j = 0; j < scale; j++) {
-              for (int i = 0; i < scale; i++) {
-                input_section(i, j, k) = input(x * scale + i, y * scale + j, k);
-                if (matchMethod == 1 || matchMethod == 2) {
-                  input_section_dx(i, j, k) = input_dx(x * scale + i, y * scale + j, k);
-                  input_section_dy(i, j, k) = input_dy(x * scale + i, y * scale + j, k);
-                }
-              }
-            }
-          }
-
-          pair<uint32_t, double> result = matchMethod == 3
-            ? search_for_fast_match(input_histogram, histogramMap[scale])
-            : search_for_exact_match(input_section, input_section_dx,
-                input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
-
-          pair<uint32_t, uint32_t> p1(idx, result.first);
-          pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
-
-          // Lock
-          results.push_back(p2);
-          // Unlock
-        }
-
-        // Lock
-        processed++;
-        if (!(processed % 10)) {
-          printf("%d / %d processed\n", processed, total);
-        }
-        // Unlock
-
-        // End Multithreading
+        t[idx] = thread(threadMatch, x, y, idx, total, scale, matchMethod,
+          std::ref(input), std::ref(input_dx), std::ref(input_dy),
+          std::ref(outputImg), std::ref(mapping), std::ref(mapping_dx),
+          std::ref(mapping_dy), std::ref(histogramMap), std::ref(processed),
+          std::ref(originalHistograms), std::ref(results));
 
         idx++;
-
       }
+    }
+
+    for (int thr = 0; thr < (input.h / scale) * (input.w / scale); thr++) {
+      t[thr].join();
     }
 
     printf("Using %.2f%% of these bad bois\n", percentages[i] * 100);
