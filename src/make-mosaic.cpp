@@ -463,7 +463,6 @@ int main(int argc, char **argv) {
         Image toUse = mapping[scale][results[idx].first.second];
         vector<uint32_t> origHist = originalHistograms[idx];
         vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
-
         toUse = histogram_scale(toUse, origHist, matchHist);
 
         for (int k = 0; k < input.c; k++) {
