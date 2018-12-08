@@ -37,7 +37,7 @@ void load_images(vector<Image>& im, char* indir) {
     exit(0);
   }
 
-  vector <unique_ptr<thread>> th;
+  vector <unique_ptr<thread> > th;
   uint32_t img_total_count = 0;
 
   // TODO: Make parallelization faster
@@ -70,9 +70,9 @@ void load_images(vector<Image>& im, char* indir) {
   }
 }
 
-map<uint16_t, vector<Image>> scale_images(vector<Image>& im,
+map<uint16_t, vector<Image> > scale_images(vector<Image>& im,
   uint16_t mosaicSize, uint8_t levels, bool squash) {
-  map<uint16_t, vector<Image>> mapping;
+  map<uint16_t, vector<Image> > mapping;
 
   for (uint32_t level = 0; level < levels; level++) {
 
@@ -195,7 +195,7 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
   }
 
   // Pick the ones within the threshold of the best
-  vector<pair<uint32_t, double>> candidates;
+  vector<pair<uint32_t, double> > candidates;
   double thresh = -1.f;
   map<double,uint32_t>::iterator it;
   for (it = valueMap.begin(); it != valueMap.end(); it++) {
@@ -213,14 +213,16 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
 
 
 pair<uint32_t, double> search_for_fast_match(vector<uint32_t>& image_hist,
-                                        vector<vector<uint32_t>> source_hist) {
+                                        vector<vector<uint32_t> > source_hist) {
   // TODO
   return pair<uint32_t, double> (0, 0.0);
 }
 
+void threadMatch() {
+
+}
 
 int main(int argc, char **argv) {
-
   // Get input parameters
   if (argc != 9) {
     printf("USAGE: ./make-mosaic <mosaicSize> <levels> <scalePercent>");
@@ -289,13 +291,13 @@ int main(int argc, char **argv) {
 
 
   // Scale images into different desired sizes
-  map<uint16_t, vector<Image>> mapping =
+  map<uint16_t, vector<Image> > mapping =
                               scale_images(source, mosaicSize, levels, squash);
 
 
   // Compute image derivatives for source images & input image
-  map<uint16_t, vector<Image>> mapping_dx;
-  map<uint16_t, vector<Image>> mapping_dy;
+  map<uint16_t, vector<Image> > mapping_dx;
+  map<uint16_t, vector<Image> > mapping_dy;
   Image input_dx;
   Image input_dy;
 
@@ -323,10 +325,10 @@ int main(int argc, char **argv) {
 
   vector<uint16_t> scales;
   // Compute image histograms
-  map<uint16_t, vector<vector<uint32_t>>> histogramMap;
+  map<uint16_t, vector<vector<uint32_t> > > histogramMap;
   for (const auto& kv : mapping) {
     scales.push_back(kv.first);
-    vector<vector<uint32_t>> histograms;
+    vector<vector<uint32_t> > histograms;
     for (uint32_t i = 0; i < kv.second.size(); i++) {
       histograms.push_back(image_to_histogram(kv.second[i]));
     }
@@ -335,6 +337,7 @@ int main(int argc, char **argv) {
   }
 
 
+  // Compute the percentages for each scale size to use
   vector<double> percentages;
   double percentLeft = 1.0;
   for (uint8_t i = 0; i < levels - 1; i++) {
@@ -354,53 +357,88 @@ int main(int argc, char **argv) {
     }
   }
 
+  // Do this backwards to avoid recomputation
   double imageSize = input.w * input.h;
   for (int i = scales.size() - 1; i >= 0; i--) {
     vector<pair<pair<uint32_t, uint32_t>, double> > results; // location, match index, score
     vector<vector<uint32_t> > originalHistograms;
     uint16_t scale = scales[i];
-    printf("Processing mosaic window %d x %d\n", scale, scale);
+    printf("Processing mosaic window %d x %d...\n", scale, scale);
     uint32_t processed = 0;
     uint32_t total = input.h * input.w / (scale * scale);
 
-    int idx = 0;
-    for (int y = 0; y < input.h / scale; y++) {
-      for (int x = 0; x < input.w / scale; x++) {
-        Image input_section(scale, scale, input.c);
-        Image input_section_dx(scale, scale, input.c);
-        Image input_section_dy(scale, scale, input.c);
-        vector<uint32_t> input_histogram = image_to_histogram(input_section);
-        originalHistograms.push_back(input_histogram);
+    uint32_t idx = 0;
+    for (uint32_t y = 0; y < input.h / scale; y++) {
+      for (uint32_t x = 0; x < input.w / scale; x++) {
 
-        // compute only if the pixel is -1.5
-        for (int k = 0; k < input.c; k++) {
-          for (int j = 0; j < scale; j++) {
-            for (int i = 0; i < scale; i++) {
+        // Start Multithreading: Need These Variables
 
-              input_section(i, j, k) = input(x * scale + i, y * scale + j, k);
-              if (matchMethod == 1 || matchMethod == 2) {
-                input_section_dx(i, j, k) = input_dx(x * scale + i, y * scale + j, k);
-                input_section_dy(i, j, k) = input_dy(x * scale + i, y * scale + j, k);
+        //   Read Only
+        //   uint32_t x,
+        //   uint32_t y,
+        //   uint32_t idx,
+        //   uint16_t scale,
+        //   uint8_t matchMethod,
+        //   Image& input,
+        //   Image& input_dx,
+        //   Image& input_dy,
+        //   Image& outputImg,
+        //   map<uint16_t, vector<Image> > mapping,
+        //   map<uint16_t, vector<Image> > mapping_dx,
+        //   map<uint16_t, vector<Image> > mapping_dy,
+        //   map<uint16_t, vector<vector<uint32_t> > > histogramMap,
+
+        //   Read / Write
+        //   uint32_t processed,
+        //   vector<vector<uint32_t> > originalHistograms,
+        //   vector<pair<pair<uint32_t, uint32_t>, double> > results
+
+
+        if (outputImg(x * scale, y * scale, 0) == -1.5) {
+          Image input_section(scale, scale, input.c);
+          Image input_section_dx(scale, scale, input.c);
+          Image input_section_dy(scale, scale, input.c);
+          vector<uint32_t> input_histogram = image_to_histogram(input_section);
+          // Lock
+          originalHistograms.push_back(input_histogram);
+          // Unlock
+
+          for (int k = 0; k < input.c; k++) {
+            for (int j = 0; j < scale; j++) {
+              for (int i = 0; i < scale; i++) {
+                input_section(i, j, k) = input(x * scale + i, y * scale + j, k);
+                if (matchMethod == 1 || matchMethod == 2) {
+                  input_section_dx(i, j, k) = input_dx(x * scale + i, y * scale + j, k);
+                  input_section_dy(i, j, k) = input_dy(x * scale + i, y * scale + j, k);
+                }
               }
             }
           }
+
+          pair<uint32_t, double> result = matchMethod == 3
+            ? search_for_fast_match(input_histogram, histogramMap[scale])
+            : search_for_exact_match(input_section, input_section_dx,
+                input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
+
+          pair<uint32_t, uint32_t> p1(idx, result.first);
+          pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
+
+          // Lock
+          results.push_back(p2);
+          // Unlock
         }
 
-
-        pair<uint32_t, double> result = matchMethod == 3
-          ? search_for_fast_match(input_histogram, histogramMap[scale])
-          : search_for_exact_match(input_section, input_section_dx,
-              input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
-
-        pair<uint32_t, uint32_t> p1(idx, result.first);
-        pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
-        results.push_back(p2);
-
-        idx++;
+        // Lock
         processed++;
         if (!(processed % 10)) {
           printf("%d / %d processed\n", processed, total);
         }
+        // Unlock
+
+        // End Multithreading
+
+        idx++;
+
       }
     }
 
@@ -443,13 +481,10 @@ int main(int argc, char **argv) {
             }
           }
         }
-
         count++;
       }
       idx++;
     }
-
-
   }
 
 
