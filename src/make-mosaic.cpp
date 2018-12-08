@@ -354,20 +354,23 @@ int main(int argc, char **argv) {
     }
   }
 
-
+  double imageSize = input.w * input.h;
   for (int i = scales.size() - 1; i >= 0; i--) {
-    vector<pair<uint32_t, double>> results;
+    vector<pair<pair<uint32_t, uint32_t>, double> > results; // location, match index, score
+    vector<vector<uint32_t> > originalHistograms;
     uint16_t scale = scales[i];
     printf("Processing mosaic window %d x %d\n", scale, scale);
     uint32_t processed = 0;
     uint32_t total = input.h * input.w / (scale * scale);
 
+    int idx = 0;
     for (int y = 0; y < input.h / scale; y++) {
       for (int x = 0; x < input.w / scale; x++) {
         Image input_section(scale, scale, input.c);
         Image input_section_dx(scale, scale, input.c);
         Image input_section_dy(scale, scale, input.c);
         vector<uint32_t> input_histogram = image_to_histogram(input_section);
+        originalHistograms.push_back(input_histogram);
 
         for (int k = 0; k < input.c; k++) {
           for (int j = 0; j < scale; j++) {
@@ -382,11 +385,17 @@ int main(int argc, char **argv) {
           }
         }
 
-        results.push_back(matchMethod == 3
+
+        pair<uint32_t, double> result = matchMethod == 3
           ? search_for_fast_match(input_histogram, histogramMap[scale])
           : search_for_exact_match(input_section, input_section_dx,
-              input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod));
+              input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
 
+        pair<uint32_t, uint32_t> p1(idx, result.first);
+        pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
+        results.push_back(p2);
+
+        idx++;
         processed++;
         if (!(processed % 10)) {
           printf("%d / %d processed\n", processed, total);
@@ -394,13 +403,40 @@ int main(int argc, char **argv) {
       }
     }
 
-    printf("Using %f%% of these bad bois\n", percentages[i]);
-    // Sort results
-    // compute number of images to reach the percent (ceil)
-    // while we have place less than those images:
-    //   check if the area we're trying to place is -1.5
-    //      if so, scale the image and place it here, increment num placed
+    printf("Using %.2f%% of these bad bois\n", percentages[i] * 100);
 
+    double segmentSize = scale * scale;
+    int cnt = (int) ceil((imageSize * percentages[i]) / segmentSize);
+    printf("ADDING %d OF THESE\n", cnt);
+
+    // Sort the results
+    std::sort(results.begin(), results.end(), [](const std::pair<pair<uint32_t, uint32_t>, double> &left,
+      const std::pair<pair<uint32_t, uint32_t>, double> &right) {
+      return left.second < right.second;
+    });
+
+    int x_blocks = input.w / scale;
+    int y_blocks = input.h / scale;
+    int count = 0;
+    idx = 0;
+    for (int y = 0; y < input.h / scale && count < cnt; y++) {
+      for (int x = 0; x < input.w / scale && count < cnt; x++) {
+        // These are essentially 0,0: we move on in scale X scale chunks
+        int x_start = results[idx].first.first % x_blocks;
+        int y_start = results[idx].first.first / x_blocks;
+        if (outputImg(x_start, y_start, 0) == -1.5) {
+          Image toUse = mapping[scale][results[idx].first.second];
+          vector<uint32_t> origHist = originalHistograms[idx];
+
+          // get the histogram of this toUse (it is calculated and saved already)
+          // image, original, to_match
+          // scale the image and place it here, increment num placed
+          count++;
+        }
+
+        idx++;
+      }
+    }
 
   }
 
