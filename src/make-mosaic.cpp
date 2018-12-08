@@ -372,6 +372,7 @@ int main(int argc, char **argv) {
         vector<uint32_t> input_histogram = image_to_histogram(input_section);
         originalHistograms.push_back(input_histogram);
 
+        // compute only if the pixel is -1.5
         for (int k = 0; k < input.c; k++) {
           for (int j = 0; j < scale; j++) {
             for (int i = 0; i < scale; i++) {
