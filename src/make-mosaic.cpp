@@ -419,24 +419,35 @@ int main(int argc, char **argv) {
     int y_blocks = input.h / scale;
     int count = 0;
     idx = 0;
-    for (int y = 0; y < input.h / scale && count < cnt; y++) {
-      for (int x = 0; x < input.w / scale && count < cnt; x++) {
-        // These are essentially 0,0: we move on in scale X scale chunks
-        int x_start = results[idx].first.first % x_blocks;
-        int y_start = results[idx].first.first / x_blocks;
-        if (outputImg(x_start, y_start, 0) == -1.5) {
-          Image toUse = mapping[scale][results[idx].first.second];
-          vector<uint32_t> origHist = originalHistograms[idx];
+    while (count < cnt && idx < results.size()) {
+      // These are essentially 0,0: we move on in scale X scale chunks
 
-          // get the histogram of this toUse (it is calculated and saved already)
-          // image, original, to_match
-          // scale the image and place it here, increment num placed
-          count++;
+      int x_blk = results[idx].first.first % x_blocks;
+      int y_blk = results[idx].first.first / x_blocks;
+
+      int x_start = x_blk * scale;
+      int y_start = y_blk * scale;
+
+      if (outputImg(x_start, y_start, 0) == -1.5) {
+        Image toUse = mapping[scale][results[idx].first.second];
+        vector<uint32_t> origHist = originalHistograms[idx];
+        vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
+
+        toUse = histogram_scale(toUse, origHist, matchHist);
+
+        for (int k = 0; k < input.c; k++) {
+          for (int j = 0; j < scale; j++) {
+            for (int i = 0; i < scale; i++) {
+              set_pixel(outputImg, x_start + i, y_start + j, k, get_pixel(toUse, i, j, k));
+            }
+          }
         }
 
-        idx++;
+        count++;
       }
+      idx++;
     }
+
 
   }
 
