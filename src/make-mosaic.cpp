@@ -16,7 +16,7 @@ using namespace std;
 
 std::mutex mtx;
 
-bool ends_with(string const & value, string const & ending){
+bool endsWith(string const & value, string const & ending){
   if (ending.size() > value.size()) {
     return false;
   }
@@ -46,8 +46,8 @@ void load_images(vector<Image>& im, char* indir) {
         string fileName = string(entry->d_name);
         th.emplace_back(new thread([&, fileName]() {
           if (strcmp(fileName.c_str(), ".") && strcmp(fileName.c_str(), "..")
-              && (ends_with(fileName, string(".png"))
-              || ends_with(fileName, string(".jpg")))) {
+              && (endsWith(fileName, string(".png"))
+              || endsWith(fileName, string(".jpg")))) {
             string file = string(indir) + "/" + fileName;
             Image i = load_image(file);
             mtx.lock();
@@ -70,49 +70,62 @@ void load_images(vector<Image>& im, char* indir) {
   }
 }
 
-map<uint16_t, vector<Image> > scale_images(vector<Image>& im,
+void threadScale(bool squash, int16_t internalMosaic, uint32_t i,
+  vector<Image>& im, vector<Image>& images) {
+  // <parallelize>
+  if (squash) {
+    Image temp = bilinear_resize(im[i], internalMosaic, internalMosaic);
+    mtx.lock();
+    images.push_back(temp);
+    mtx.unlock();
+  } else {
+    uint32_t sideLen = min(im[i].w, im[i].h);
+    Image square(sideLen, sideLen, im[i].c);
+
+    uint32_t xLower = 0;
+    uint32_t xUpper = im[i].w;
+    uint32_t yLower = 0;
+    uint32_t yUpper = im[i].h;
+
+    if (im[i].w != sideLen) {
+      xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
+      xUpper -= (uint32_t) ceil((xUpper - sideLen) / 2.f);
+    }
+    if (im[i].h != sideLen) {
+      yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
+      yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
+    }
+
+    for (uint32_t k = 0; k < im[i].c; k++) {
+      for (uint32_t y = yLower; y < yUpper; y++) {
+        for (uint32_t x = xLower; x < xUpper; x++) {
+          square(x - xLower, y - yLower, k) = im[i](x, y, k);
+        }
+      }
+    }
+    Image temp = bilinear_resize(square, internalMosaic, internalMosaic);
+    mtx.lock();
+    images.push_back(temp);
+    mtx.unlock();
+  }
+}
+
+map<uint16_t, vector<Image> > scaleImages(vector<Image>& im,
   uint16_t mosaicSize, uint8_t levels, bool squash) {
   map<uint16_t, vector<Image> > mapping;
 
   for (uint32_t level = 0; level < levels; level++) {
-
     int16_t internalMosaic = pow(2, level) * mosaicSize;
     vector<Image> images;
+    std::thread t[im.size()];
 
     for (unsigned i = 0; i < im.size(); i++) {
-      // <parallelize>
-      if (squash) {
-        Image temp = bilinear_resize(im[i], internalMosaic, internalMosaic);
-        images.push_back(temp);
-      } else {
-        uint32_t sideLen = min(im[i].w, im[i].h);
-        Image square(sideLen, sideLen, im[i].c);
+      t[i] = thread(threadScale, squash, internalMosaic, i,
+        std::ref(im), std::ref(images));
+    }
 
-        uint32_t xLower = 0;
-        uint32_t xUpper = im[i].w;
-        uint32_t yLower = 0;
-        uint32_t yUpper = im[i].h;
-
-        if (im[i].w != sideLen) {
-          xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
-          xUpper -= (uint32_t) ceil((xUpper - sideLen) / 2.f);
-        }
-        if (im[i].h != sideLen) {
-          yLower += (uint32_t) floor((yUpper - sideLen) / 2.f);
-          yUpper -= (uint32_t) ceil((yUpper - sideLen) / 2.f);
-        }
-
-        for (uint32_t k = 0; k < im[i].c; k++) {
-          for (uint32_t y = yLower; y < yUpper; y++) {
-            for (uint32_t x = xLower; x < xUpper; x++) {
-              square(x - xLower, y - yLower, k) = im[i](x, y, k);
-            }
-          }
-        }
-        Image temp = bilinear_resize(square, internalMosaic, internalMosaic);
-        images.push_back(temp);
-      }
-      // </parallelize>
+    for (int thr = 0; thr < im.size(); thr++) {
+      t[thr].join();
     }
     mapping[internalMosaic] = images;
     printf("Scaled source images to %d x %d\n", internalMosaic, internalMosaic);
@@ -121,13 +134,13 @@ map<uint16_t, vector<Image> > scale_images(vector<Image>& im,
   return mapping;
 }
 
-Image scale_image(Image im, uint16_t mosaicSize) {
+Image scaleImage(Image im, uint16_t mosaicSize) {
 
   return bilinear_resize(im, im.w / mosaicSize * mosaicSize,
     im.h / mosaicSize * mosaicSize);
 }
 
-double l1_distance(Image& a, Image& b) {
+double l1Distance(Image& a, Image& b) {
   double sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
@@ -140,7 +153,7 @@ double l1_distance(Image& a, Image& b) {
   return sum;
 }
 
-double l2_distance(Image& a, Image& b) {
+double l2Distance(Image& a, Image& b) {
   double sum = 0.0;
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
@@ -182,9 +195,9 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
   multimap<double, uint32_t> valueMap;
   // Sort the matches
   for (uint32_t i = 0; i < source.size(); i++) {
-    double temp_val_raw = mode == 1 ? 0 : l2_distance(input, source[i]);
-    double temp_val_dx = mode == 0 ? 0 : l2_distance(input_dx, source_dx[i]) * derivative_scale;
-    double temp_val_dy = mode == 0 ? 0 : l2_distance(input_dy, source_dy[i]) * derivative_scale;
+    double temp_val_raw = mode == 1 ? 0 : l2Distance(input, source[i]);
+    double temp_val_dx = mode == 0 ? 0 : l2Distance(input_dx, source_dx[i]) * derivative_scale;
+    double temp_val_dy = mode == 0 ? 0 : l2Distance(input_dy, source_dy[i]) * derivative_scale;
 
     double temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
     valueMap.insert(pair<double, uint32_t>(temp_val_sum, i));
@@ -270,6 +283,21 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
 }
 
+void threadCombine(Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
+  vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
+  uint32_t yStart) {
+
+    toUse = histogram_scale(toUse, origHist, matchHist);
+
+    for (int k = 0; k < inputC; k++) {
+      for (int j = 0; j < scale; j++) {
+        for (int i = 0; i < scale; i++) {
+          set_pixel(outputImg, xStart + i, yStart + j, k, get_pixel(toUse, i, j, k));
+        }
+      }
+    }
+}
+
 int main(int argc, char **argv) {
   // Get input parameters
   if (argc != 9) {
@@ -329,7 +357,7 @@ int main(int argc, char **argv) {
 
 
   // Get input image to make into mosaic
-  Image input = scale_image(load_image(string(argv[7])), mosaicSize);
+  Image input = scaleImage(load_image(string(argv[7])), mosaicSize);
   printf("Loaded %d x %d input image\n", input.w, input.h);
 
 
@@ -340,7 +368,7 @@ int main(int argc, char **argv) {
 
   // Scale images into different desired sizes
   map<uint16_t, vector<Image> > mapping =
-                              scale_images(source, mosaicSize, levels, squash);
+                              scaleImages(source, mosaicSize, levels, squash);
 
 
   // Compute image derivatives for source images & input image
@@ -450,6 +478,9 @@ int main(int argc, char **argv) {
     int y_blocks = input.h / scale;
     int count = 0;
     idx = 0;
+
+    std::thread t2[max(count < cnt, idx < results.size())];
+
     while (count < cnt && idx < results.size()) {
       // These are essentially 0,0: we move on in scale X scale chunks
 
@@ -460,9 +491,16 @@ int main(int argc, char **argv) {
       int y_start = y_blk * scale;
 
       if (outputImg(x_start, y_start, 0) == -1.5) {
+
         Image toUse = mapping[scale][results[idx].first.second];
         vector<uint32_t> origHist = originalHistograms[idx];
         vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
+
+        // Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
+        // vector<uint32_t> matchHist, uint16_t scale, uint32_t input.c
+        //t2[count] = thread(threadCombine, std::ref(outputImg),
+        //std::ref(toUse), std::ref(origHist), std::ref(matchHist), scale,
+        //input.c, x_start, y_start);
         toUse = histogram_scale(toUse, origHist, matchHist);
 
         for (int k = 0; k < input.c; k++) {
@@ -476,6 +514,10 @@ int main(int argc, char **argv) {
       }
       idx++;
     }
+    for(uint32_t i = 0; i < count; i++) {
+      //t2[i].join();
+    }
+
   }
 
 
