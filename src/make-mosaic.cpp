@@ -335,36 +335,57 @@ int main(int argc, char **argv) {
   }
 
 
-  map<uint16_t, vector<pair<uint32_t, double>>> resultMap;
-  for (auto& kv : scales) {
-    printf("Processing mosaic window %d x %d\n", kv, kv);
-    uint32_t processed = 0;
-    uint32_t total = input.h * input.w / (kv * kv);
+  vector<double> percentages;
+  double percentLeft = 1.0;
+  for (uint8_t i = 0; i < levels - 1; i++) {
+    percentages.push_back(percentLeft * (1 - scaleFactor));
+    percentLeft *= scaleFactor;
+  }
+  percentages.push_back(percentLeft);
 
-    for (int y = 0; y < input.h / kv; y++) {
-      for (int x = 0; x < input.w / kv; x++) {
-        Image input_section(kv, kv, input.c);
-        Image input_section_dx(kv, kv, input.c);
-        Image input_section_dy(kv, kv, input.c);
+
+  // Initialize as negative so we know what's been filled in
+  Image outputImg(input.w, input.h, input.c);
+  for (int k = 0; k < outputImg.c; k++) {
+    for (int y = 0; y < outputImg.h; y++) {
+      for (int x = 0; x < outputImg.w; x++) {
+        outputImg(x, y, k) = -1.5;
+      }
+    }
+  }
+
+
+  for (int i = scales.size() - 1; i >= 0; i--) {
+    vector<pair<uint32_t, double>> results;
+    uint16_t scale = scales[i];
+    printf("Processing mosaic window %d x %d\n", scale, scale);
+    uint32_t processed = 0;
+    uint32_t total = input.h * input.w / (scale * scale);
+
+    for (int y = 0; y < input.h / scale; y++) {
+      for (int x = 0; x < input.w / scale; x++) {
+        Image input_section(scale, scale, input.c);
+        Image input_section_dx(scale, scale, input.c);
+        Image input_section_dy(scale, scale, input.c);
         vector<uint32_t> input_histogram = image_to_histogram(input_section);
 
         for (int k = 0; k < input.c; k++) {
-          for (int j = 0; j < kv; j++) {
-            for (int i = 0; i < kv; i++) {
+          for (int j = 0; j < scale; j++) {
+            for (int i = 0; i < scale; i++) {
 
-              input_section(i, j, k) = input(x * kv + i, y * kv + j, k);
+              input_section(i, j, k) = input(x * scale + i, y * scale + j, k);
               if (matchMethod == 1 || matchMethod == 2) {
-                input_section_dx(i, j, k) = input_dx(x * kv + i, y * kv + j, k);
-                input_section_dy(i, j, k) = input_dy(x * kv + i, y * kv + j, k);
+                input_section_dx(i, j, k) = input_dx(x * scale + i, y * scale + j, k);
+                input_section_dy(i, j, k) = input_dy(x * scale + i, y * scale + j, k);
               }
             }
           }
         }
 
-        resultMap[kv].push_back(matchMethod == 3
-          ? search_for_fast_match(input_histogram, histogramMap[kv])
+        results.push_back(matchMethod == 3
+          ? search_for_fast_match(input_histogram, histogramMap[scale])
           : search_for_exact_match(input_section, input_section_dx,
-              input_section_dy, mapping[kv], mapping_dx[kv], mapping_dy[kv], matchMethod));
+              input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod));
 
         processed++;
         if (!(processed % 10)) {
@@ -372,14 +393,19 @@ int main(int argc, char **argv) {
         }
       }
     }
+
+    printf("Using %f%% of these bad bois\n", percentages[i]);
+    // Sort results
+    // compute number of images to reach the percent (ceil)
+    // while we have place less than those images:
+    //   check if the area we're trying to place is -1.5
+    //      if so, scale the image and place it here, increment num placed
+
+
   }
 
 
-  // TODO: Put images back together & scale them accordingly
-  
-
-
-  save_png(input, "output/" + output);
+  save_png(outputImg, "output/" + output);
 
   return 0;
 }
