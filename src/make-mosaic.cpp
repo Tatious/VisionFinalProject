@@ -24,7 +24,7 @@ bool endsWith(string const & value, string const & ending){
 }
 
 float rand_float(float min, float max) {
-  return min + static_cast <float> (rand()) /( static_cast <float> (RAND_MAX/(max-min)));
+  return min + static_cast <float> (random()) / (RAND_MAX/(max-min));
 }
 
 void load_images(vector<Image>& im, char* indir) {
@@ -32,7 +32,7 @@ void load_images(vector<Image>& im, char* indir) {
   DIR *dp;
 
   dp = opendir(indir);
-  if (dp == NULL) {
+  if (dp == nullptr) {
     fprintf(stderr, "ERROR: Path does not exist or could not be read.");
     exit(0);
   }
@@ -40,7 +40,6 @@ void load_images(vector<Image>& im, char* indir) {
   vector <unique_ptr<thread> > th;
   uint32_t img_total_count = 0;
 
-  // TODO: Make parallelization faster
   while ((entry = readdir(dp))) {
     if (entry != nullptr) {
         string fileName = string(entry->d_name);
@@ -70,22 +69,23 @@ void load_images(vector<Image>& im, char* indir) {
   }
 }
 
-void threadScale(bool squash, int16_t internalMosaic, uint32_t i,
-  vector<Image>& im, vector<Image>& images) {
-  // <parallelize>
+void threadScale(bool squash, uint16_t internalMosaic, uint32_t i,
+  vector<Image>& im, map<uint32_t, Image>& images) {
+
+
   if (squash) {
     Image temp = bilinear_resize(im[i], internalMosaic, internalMosaic);
     mtx.lock();
-    images.push_back(temp);
+    images[i] = temp;
     mtx.unlock();
   } else {
-    uint32_t sideLen = min(im[i].w, im[i].h);
+    uint32_t sideLen = (uint32_t) min(im[i].w, im[i].h);
     Image square(sideLen, sideLen, im[i].c);
 
     uint32_t xLower = 0;
-    uint32_t xUpper = im[i].w;
+    uint32_t xUpper = (uint32_t) im[i].w;
     uint32_t yLower = 0;
-    uint32_t yUpper = im[i].h;
+    uint32_t yUpper = (uint32_t) im[i].h;
 
     if (im[i].w != sideLen) {
       xLower += (uint32_t) floor((xUpper - sideLen) / 2.f);
@@ -105,9 +105,16 @@ void threadScale(bool squash, int16_t internalMosaic, uint32_t i,
     }
     Image temp = bilinear_resize(square, internalMosaic, internalMosaic);
     mtx.lock();
-    images.push_back(temp);
+    images[i] = temp;
     mtx.unlock();
   }
+}
+
+void threadConvolve(Image& im, Image& filter, map<uint32_t, Image>& results, uint32_t i) {
+    Image res = convolve_image(im, make_gx_filter(), 1);
+    mtx.lock();
+    results[i] = res;
+    mtx.unlock();
 }
 
 map<uint16_t, vector<Image> > scaleImages(vector<Image>& im,
@@ -115,19 +122,23 @@ map<uint16_t, vector<Image> > scaleImages(vector<Image>& im,
   map<uint16_t, vector<Image> > mapping;
 
   for (uint32_t level = 0; level < levels; level++) {
-    int16_t internalMosaic = pow(2, level) * mosaicSize;
-    vector<Image> images;
-    std::thread t[im.size()];
+    uint16_t internalMosaic = (uint16_t) pow(2, level) * mosaicSize;
+    map<uint32_t, Image> images;
+
+    vector<thread> threads;
 
     for (unsigned i = 0; i < im.size(); i++) {
-      t[i] = thread(threadScale, squash, internalMosaic, i,
-        std::ref(im), std::ref(images));
+      thread th(threadScale, squash, internalMosaic, i, std::ref(im), std::ref(images));
+      threads.push_back(std::move(th));
     }
 
-    for (int thr = 0; thr < im.size(); thr++) {
-      t[thr].join();
-    }
-    mapping[internalMosaic] = images;
+    for (auto& th : threads) th.join(); threads.clear();
+
+    vector<Image> imagesSorted;
+      for (unsigned i = 0; i < im.size(); i++) {
+          imagesSorted.push_back(images[i]);
+      }
+    mapping[internalMosaic] = imagesSorted;
     printf("Scaled source images to %d x %d\n", internalMosaic, internalMosaic);
   }
 
@@ -155,11 +166,13 @@ double l1Distance(Image& a, Image& b) {
 
 double l2Distance(Image& a, Image& b) {
   double sum = 0.0;
+  double vals[] = {0.3, 0.6, 0.15};
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
+
     for (uint32_t j = 0; j < a.h; j++) {
       for (uint32_t i = 0; i < a.w; i++) {
-        sum += pow(a(i, j, k) - b(i, j, k), 2);
+        sum += vals[k] * pow(a(i, j, k) - b(i, j, k), 2);
       }
     }
   }
@@ -200,6 +213,7 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
     double temp_val_dy = mode == 0 ? 0 : l2Distance(input_dy, source_dy[i]) * derivative_scale;
 
     double temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
+
     valueMap.insert(pair<double, uint32_t>(temp_val_sum, i));
     if (temp_val_sum < best_val) {
       best_index = i;
@@ -217,7 +231,7 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
       thresh = current_val * scale;
     }
     if (current_val < thresh) {
-      candidates.push_back(pair<uint32_t, double>((*it).second, (*it).first));
+      candidates.emplace_back((*it).second, (*it).first);
     }
   }
 
@@ -263,8 +277,13 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
       pair<uint32_t, double> result = matchMethod == 3
         ? search_for_fast_match(input_histogram, histogramMap[scale])
-        : search_for_exact_match(input_section, input_section_dx,
-            input_section_dy, mapping[scale], mapping_dx[scale], mapping_dy[scale], matchMethod);
+        : search_for_exact_match(input_section,
+                input_section_dx,
+            input_section_dy,
+            mapping[scale],
+            mapping_dx[scale],
+            mapping_dy[scale],
+            matchMethod);
 
       pair<uint32_t, uint32_t> p1(idx, result.first);
       pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
@@ -287,18 +306,52 @@ void threadCombine(Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
   vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
   uint32_t yStart) {
 
-    toUse = histogram_scale(toUse, origHist, matchHist);
+    //Image a = histogram_scale(toUse, origHist, matchHist);
 
     for (int k = 0; k < inputC; k++) {
       for (int j = 0; j < scale; j++) {
         for (int i = 0; i < scale; i++) {
-          set_pixel(outputImg, xStart + i, yStart + j, k, get_pixel(toUse, i, j, k));
+          set_pixel(outputImg, xStart + i, yStart + j, k, toUse(i, j, k));
         }
       }
     }
 }
 
+Image meanScale(Image& im1, Image& im2) {
+    Image im3(im1.w, im1.h, im1.c);
+    for (uint32_t k = 0; k < im1.c; k++) {
+        double m1 = 0.0;
+        double m2 = 0.0;
+        uint32_t count = 0;
+
+        for (uint32_t j = 0; j < im1.h; j++) {
+            for (uint32_t i = 0; i < im1.w; i++) {
+                m1 += im1(i, j, k);
+                m2 += im2(i, j, k);
+                count++;
+            }
+        }
+        m1 /= count;
+        m2 /= count;
+        double m3 = m1 - m2;
+        for (uint32_t j = 0; j < im1.h; j++) {
+            for (uint32_t i = 0; i < im1.w; i++) {
+                im3(i, j, k) = im1(i, j, k);
+            }
+        }
+    }
+
+    return im3;
+}
+
+
+
+
+
 int main(int argc, char **argv) {
+
+  vector<thread> threads;
+
   // Get input parameters
   if (argc != 9) {
     printf("USAGE: ./make-mosaic <mosaicSize> <levels> <scalePercent>");
@@ -308,7 +361,7 @@ int main(int argc, char **argv) {
 
 
   // Get the base mosaic size we want
-  uint16_t mosaicSize = (uint16_t) atoi(argv[1]);
+  auto mosaicSize = (uint16_t) atoi(argv[1]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
     exit(0);
@@ -317,9 +370,9 @@ int main(int argc, char **argv) {
 
 
   // Get how many levels of different sizes we want
-  int8_t levels = (int8_t) atoi(argv[2]);
-  if (levels <= 0 && levels > 8) {
-    fprintf(stderr, "ERROR: levels must be > 0 and <= 8.");
+  auto levels = (uint8_t) atoi(argv[2]);
+  if (levels > 8) {
+    fprintf(stderr, "ERROR: levels must be <= 8.");
     exit(0);
   }
   printf("Number of larger mosaic levels = %d\n", levels);
@@ -341,7 +394,7 @@ int main(int argc, char **argv) {
 
 
   // Get match type
-  uint8_t matchMethod = (uint8_t) atoi(argv[5]);
+  auto matchMethod = (uint8_t) atoi(argv[5]);
   if (matchMethod > 3) {
     fprintf(stderr, "ERROR: match method must be 0=exact, 1=derivative, 2=exact+derivative, or 3=histogram.");
     exit(0);
@@ -371,32 +424,51 @@ int main(int argc, char **argv) {
                               scaleImages(source, mosaicSize, levels, squash);
 
 
+
+
   // Compute image derivatives for source images & input image
-  map<uint16_t, vector<Image> > mapping_dx;
-  map<uint16_t, vector<Image> > mapping_dy;
+  map<uint16_t, vector<Image> > mappingDx;
+  map<uint16_t, vector<Image> > mappingDy;
   Image input_dx;
   Image input_dy;
 
   if (matchMethod == 1 || matchMethod == 2) {
-    Image gx_filter = make_gx_filter();
-    Image gy_filter = make_gy_filter();
+    Image gxFilter = make_gx_filter();
+    Image gyFilter = make_gy_filter();
 
+    map<uint32_t, Image> imDx;
+    map<uint32_t, Image> imDy;
+    vector<thread> threads;
+    for (uint32_t i = 0; i < source.size(); i++) {
+        thread th(threadConvolve, std::ref(source[i]), std::ref(gxFilter), std::ref(imDx), i);
+        threads.push_back(std::move(th));
+        th = thread(threadConvolve, std::ref(source[i]), std::ref(gyFilter), std::ref(imDy), i);
+        threads.push_back(std::move(th));
+    }
+    for (auto& th : threads) th.join(); threads.clear();
+
+    vector<Image> sourceDx;
+    vector<Image> sourceDy;
+    for (uint32_t i = 0; i < source.size(); i++) {
+        sourceDx.push_back(imDx[i]);
+        sourceDy.push_back(imDy[i]);
+    }
+    mappingDx = scaleImages(sourceDx, mosaicSize, levels, squash);
+    mappingDy = scaleImages(sourceDy, mosaicSize, levels, squash);
+
+    input_dx = convolve_image(input, gxFilter, 1);
+    input_dy = convolve_image(input, gyFilter, 1);
+    printf("Computed image derivative for input image\n");
+  } else {
     for (const auto& kv : mapping) {
       vector<Image> source_dx;
       vector<Image> source_dy;
-      for (uint32_t i = 0; i < kv.second.size(); i++) {
-        source_dx.push_back(convolve_image(source[i], gx_filter, 1));
-        source_dy.push_back(convolve_image(source[i], gy_filter, 1));
-      }
-      mapping_dx[kv.first] = source_dx;
-      mapping_dy[kv.first] = source_dy;
-      printf("Computed image derivatives for %d x %d source images\n", kv.first, kv.first);
+      mappingDx[kv.first] = source_dx;
+      mappingDy[kv.first] = source_dy;
     }
-
-    input_dx = convolve_image(input, gx_filter, 1);
-    input_dy = convolve_image(input, gy_filter, 1);
-    printf("Computed image derivative for input image\n");
   }
+
+
 
 
   vector<uint16_t> scales;
@@ -405,12 +477,14 @@ int main(int argc, char **argv) {
   for (const auto& kv : mapping) {
     scales.push_back(kv.first);
     vector<vector<uint32_t> > histograms;
-    for (uint32_t i = 0; i < kv.second.size(); i++) {
-      histograms.push_back(image_to_histogram(kv.second[i]));
+    for (auto& k : kv.second) {
+      histograms.push_back(image_to_histogram(k));
     }
     histogramMap[kv.first] = histograms;
     printf("Computed image histograms for %d x %d source images\n", kv.first, kv.first);
   }
+
+
 
 
   // Compute the percentages for each scale size to use
@@ -428,39 +502,44 @@ int main(int argc, char **argv) {
   for (int k = 0; k < outputImg.c; k++) {
     for (int y = 0; y < outputImg.h; y++) {
       for (int x = 0; x < outputImg.w; x++) {
-        outputImg(x, y, k) = -1.5;
+        outputImg(x, y, k) = -1.5f;
       }
     }
   }
 
+
+
+
+
+
+
   // Do this backwards to avoid recomputation
   double imageSize = input.w * input.h;
-  for (int i = scales.size() - 1; i >= 0; i--) {
+  for (auto i = (int32_t) (scales.size() - 1); i >= 0; i--) {
     vector<pair<pair<uint32_t, uint32_t>, double> > results; // location, match index, score
     vector<vector<uint32_t> > originalHistograms;
     uint16_t scale = scales[i];
     printf("Processing mosaic window %d x %d...\n", scale, scale);
     uint32_t processed = 0;
-    uint32_t total = input.h * input.w / (scale * scale);
+    auto total = (uint32_t) ((input.h * input.w) / (scale * scale));
 
-    std::thread t[(input.h / scale) * (input.w / scale)];
     uint32_t idx = 0;
     for (uint32_t y = 0; y < input.h / scale; y++) {
       for (uint32_t x = 0; x < input.w / scale; x++) {
 
-        t[idx] = thread(threadMatch, x, y, idx, total, scale, matchMethod,
+        thread th(threadMatch, x, y, idx, total, scale, matchMethod,
           std::ref(input), std::ref(input_dx), std::ref(input_dy),
-          std::ref(outputImg), std::ref(mapping), std::ref(mapping_dx),
-          std::ref(mapping_dy), std::ref(histogramMap), std::ref(processed),
+          std::ref(outputImg), std::ref(mapping), std::ref(mappingDx),
+          std::ref(mappingDy), std::ref(histogramMap), std::ref(processed),
           std::ref(originalHistograms), std::ref(results));
+        threads.push_back(std::move(th));
 
         idx++;
       }
     }
 
-    for (int thr = 0; thr < (input.h / scale) * (input.w / scale); thr++) {
-      t[thr].join();
-    }
+    for (auto& th : threads)th.join();threads.clear();
+
 
     printf("Using %.2f%% of these bad bois\n", percentages[i] * 100);
 
@@ -474,51 +553,38 @@ int main(int argc, char **argv) {
       return left.second < right.second;
     });
 
-    int x_blocks = input.w / scale;
-    int y_blocks = input.h / scale;
+    int xBlocks = input.w / scale;
     int count = 0;
     idx = 0;
 
-    std::thread t2[max(count < cnt, idx < results.size())];
-
+    threads.clear();
     while (count < cnt && idx < results.size()) {
       // These are essentially 0,0: we move on in scale X scale chunks
 
-      int x_blk = results[idx].first.first % x_blocks;
-      int y_blk = results[idx].first.first / x_blocks;
+      int xBlk = results[idx].first.first % xBlocks;
+      int yBlk = results[idx].first.first / xBlocks;
 
-      int x_start = x_blk * scale;
-      int y_start = y_blk * scale;
+      int xStart = xBlk * scale;
+      int yStart = yBlk * scale;
 
-      if (outputImg(x_start, y_start, 0) == -1.5) {
-
-        Image toUse = mapping[scale][results[idx].first.second];
+      if (outputImg(xStart, yStart, 0) == -1.5) {
+        Image& toUse = mapping[scale][results[idx].first.second];
         vector<uint32_t> origHist = originalHistograms[idx];
         vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
 
-        // Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
-        // vector<uint32_t> matchHist, uint16_t scale, uint32_t input.c
-        //t2[count] = thread(threadCombine, std::ref(outputImg),
-        //std::ref(toUse), std::ref(origHist), std::ref(matchHist), scale,
-        //input.c, x_start, y_start);
-        toUse = histogram_scale(toUse, origHist, matchHist);
+        thread th(threadCombine, std::ref(outputImg), std::ref(toUse), std::ref(origHist),
+          std::ref(matchHist), scale, input.c, xStart, yStart);
+        threads.push_back(std::move(th));
 
-        for (int k = 0; k < input.c; k++) {
-          for (int j = 0; j < scale; j++) {
-            for (int i = 0; i < scale; i++) {
-              set_pixel(outputImg, x_start + i, y_start + j, k, get_pixel(toUse, i, j, k));
-            }
-          }
-        }
         count++;
       }
       idx++;
     }
-    for(uint32_t i = 0; i < count; i++) {
-      //t2[i].join();
-    }
+
+    for (auto& th : threads)th.join();threads.clear();
 
   }
+
 
 
   save_png(outputImg, "output/" + output);
