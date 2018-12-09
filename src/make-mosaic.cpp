@@ -179,10 +179,17 @@ double l2Distance(Image& a, Image& b) {
   return sum;
 }
 
-vector<uint32_t> image_to_histogram(const Image& im) {
-  // TODO
-  vector<uint32_t> histogram;
-  return histogram;
+Image image_to_histogram(const Image& im, const uint16_t r=8, const uint16_t g=8, const uint16_t b=8) {
+  Image hist(r, g, b);
+
+  for (uint32_t y = 0; y < im.h; y++) {
+    for (uint32_t x = 0; x < im.w; x++) {
+      hist((int) (im(x, y, 0) * (r - 1)), (int) (im(x, y, 1) * (g - 1)), (int) (im(x, y, 2) * (b - 1)))++;
+    }
+  }
+
+  hist.feature_normalize();
+  return hist;
 }
 
 
@@ -239,29 +246,51 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
 }
 
 
-pair<uint32_t, double> search_for_fast_match(vector<uint32_t>& image_hist,
-                                        vector<vector<uint32_t> > source_hist) {
-  // TODO
-  return pair<uint32_t, double> (0, 0.0);
+pair<uint32_t, double> search_for_fast_match(Image& image_hist, vector<Image>& source_hists) {
+  map<float, uint32_t, std::greater<float>> intersections;
+
+  for (auto i = 0; i < source_hists.size(); i++) {
+    Image& source_hist = source_hists[i];
+    assert(source_hist.w == image_hist.w && source_hist.h == image_hist.h && source_hist.c == image_hist.c);
+
+    double intersection = 0.0;
+    for (auto c = 0; c < image_hist.c; c++) {
+      for (auto y = 0; y < image_hist.h; y++) {
+        for (auto x = 0; x < image_hist.w; x++) {
+          intersection += fminf(image_hist(x, y, c), source_hist(x, y, c));
+        }
+      }
+    }
+
+    intersections.insert({intersection, i});
+  }
+
+  // Pick from the top 10% of intersections.
+  vector<pair<uint32_t, double>> candidates;
+  auto it = intersections.begin();
+  for (auto i = 0; i < 3 && it->first != 0.0; i++, it++) {
+      candidates.emplace_back(it->second, it->first);
+  }
+
+  if (candidates.empty()) {
+    return {0, 0.0};
+  } else {
+    return candidates[rand() % candidates.size()];
+  }
 }
 
 void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
   uint16_t scale, uint8_t matchMethod, Image& input, Image& input_dx,
   Image& input_dy, Image& outputImg, map<uint16_t, vector<Image> >& mapping,
   map<uint16_t, vector<Image> >& mapping_dx, map<uint16_t, vector<Image> >& mapping_dy,
-  map<uint16_t, vector<vector<uint32_t> > >& histogramMap, uint32_t& processed,
-  vector<vector<uint32_t> >& originalHistograms,
+  map<uint16_t, vector<Image>>& histogramMap, uint32_t& processed,
+  vector<Image>& originalHistograms,
   vector<pair<pair<uint32_t, uint32_t>, double> >& results) {
 
     if (outputImg(x * scale, y * scale, 0) == -1.5) {
       Image input_section(scale, scale, input.c);
       Image input_section_dx(scale, scale, input.c);
       Image input_section_dy(scale, scale, input.c);
-      vector<uint32_t> input_histogram = image_to_histogram(input_section);
-
-      mtx.lock();
-      originalHistograms.push_back(input_histogram);
-      mtx.unlock();
 
       for (int k = 0; k < input.c; k++) {
         for (int j = 0; j < scale; j++) {
@@ -275,7 +304,9 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
         }
       }
 
-      pair<uint32_t, double> result = matchMethod == 3
+        Image input_histogram = image_to_histogram(input_section);
+
+        pair<uint32_t, double> result = matchMethod == 3
         ? search_for_fast_match(input_histogram, histogramMap[scale])
         : search_for_exact_match(input_section,
                 input_section_dx,
@@ -289,6 +320,7 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
       pair<pair<uint32_t, uint32_t>, double> p2(p1, result.second);
 
       mtx.lock();
+      originalHistograms.push_back(std::move(input_histogram));
       results.push_back(p2);
       mtx.unlock();
     }
@@ -302,8 +334,8 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
 }
 
-void threadCombine(Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
-  vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
+void threadCombine(Image& outputImg, Image& toUse, Image& origHist,
+  Image& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
   uint32_t yStart) {
 
     //Image a = histogram_scale(toUse, origHist, matchHist);
@@ -420,9 +452,7 @@ int main(int argc, char **argv) {
 
 
   // Scale images into different desired sizes
-  map<uint16_t, vector<Image> > mapping =
-                              scaleImages(source, mosaicSize, levels, squash);
-
+  map<uint16_t, vector<Image> > mapping = scaleImages(source, mosaicSize, levels, squash);
 
 
 
@@ -473,14 +503,14 @@ int main(int argc, char **argv) {
 
   vector<uint16_t> scales;
   // Compute image histograms
-  map<uint16_t, vector<vector<uint32_t> > > histogramMap;
+  map<uint16_t, vector<Image>> histogramMap;
   for (const auto& kv : mapping) {
     scales.push_back(kv.first);
-    vector<vector<uint32_t> > histograms;
-    for (auto& k : kv.second) {
-      histograms.push_back(image_to_histogram(k));
+    vector<Image> histograms;
+    for (const auto &i : kv.second) {
+      histograms.push_back(image_to_histogram(i));
     }
-    histogramMap[kv.first] = histograms;
+    histogramMap.insert({kv.first, std::move(histograms)});
     printf("Computed image histograms for %d x %d source images\n", kv.first, kv.first);
   }
 
@@ -517,7 +547,7 @@ int main(int argc, char **argv) {
   double imageSize = input.w * input.h;
   for (auto i = (int32_t) (scales.size() - 1); i >= 0; i--) {
     vector<pair<pair<uint32_t, uint32_t>, double> > results; // location, match index, score
-    vector<vector<uint32_t> > originalHistograms;
+    vector<Image> originalHistograms;
     uint16_t scale = scales[i];
     printf("Processing mosaic window %d x %d...\n", scale, scale);
     uint32_t processed = 0;
@@ -569,11 +599,11 @@ int main(int argc, char **argv) {
 
       if (outputImg(xStart, yStart, 0) == -1.5) {
         Image& toUse = mapping[scale][results[idx].first.second];
-        vector<uint32_t> origHist = originalHistograms[idx];
-        vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
+        Image& origHist = originalHistograms[idx];
+        Image& matchHist = histogramMap[scale][results[idx].first.second];
 
         thread th(threadCombine, std::ref(outputImg), std::ref(toUse), std::ref(origHist),
-          std::ref(matchHist), scale, input.c, xStart, yStart);
+                std::ref(matchHist), scale, input.c, xStart, yStart);
         threads.push_back(std::move(th));
 
         count++;
