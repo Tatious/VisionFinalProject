@@ -168,7 +168,7 @@ double l1Distance(Image& a, Image& b) {
 
 double l2Distance(Image& a, Image& b) {
   double sum = 0.0;
-  double vals[] = {0.3, 0.6, 0.15};
+  double vals[] = {1,1,1};
   assert(a.w == b.w && a.h == b.h && a.c == b.c);
   for (uint32_t k = 0; k < a.c; k++) {
 
