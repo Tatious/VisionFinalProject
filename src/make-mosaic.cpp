@@ -16,6 +16,8 @@ using namespace std;
 
 std::mutex mtx;
 
+#define WINDOW 4
+
 bool endsWith(string const & value, string const & ending){
   if (ending.size() > value.size()) {
     return false;
@@ -221,7 +223,7 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
 
     double temp_val_sum = temp_val_raw + derivative_scale * (temp_val_dx + temp_val_dy);
 
-    valueMap.insert(pair<double, uint32_t>(temp_val_sum, i));
+    valueMap.insert({temp_val_sum, i});
     if (temp_val_sum < best_val) {
       best_index = i;
       best_val = temp_val_sum;
@@ -230,16 +232,9 @@ pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Ima
 
   // Pick the ones within the threshold of the best
   vector<pair<uint32_t, double> > candidates;
-  double thresh = -1.f;
-  map<double,uint32_t>::iterator it;
-  for (it = valueMap.begin(); it != valueMap.end(); it++) {
-    double current_val = (*it).first;
-    if (thresh < 0) {
-      thresh = current_val * scale;
-    }
-    if (current_val < thresh) {
-      candidates.emplace_back((*it).second, (*it).first);
-    }
+  // int count = 0;
+  for (auto it = valueMap.begin(); it != valueMap.end() && candidates.size() < 15; it++) {
+    candidates.emplace_back((*it).second, (*it).first);
   }
 
   return candidates[rand() % candidates.size()];
@@ -257,7 +252,7 @@ pair<uint32_t, double> search_for_fast_match(Image& image_hist, vector<Image>& s
     for (auto c = 0; c < image_hist.c; c++) {
       for (auto y = 0; y < image_hist.h; y++) {
         for (auto x = 0; x < image_hist.w; x++) {
-          intersection += fminf(image_hist(x, y, c), source_hist(x, y, c));
+          intersection += powf(image_hist(x, y, c) - source_hist(x, y, c), 2);
         }
       }
     }
@@ -268,7 +263,7 @@ pair<uint32_t, double> search_for_fast_match(Image& image_hist, vector<Image>& s
   // Pick from the top 10% of intersections.
   vector<pair<uint32_t, double>> candidates;
   auto it = intersections.begin();
-  for (auto i = 0; i < 3 && it->first != 0.0; i++, it++) {
+  for (auto i = 0; i < 10 && it->first != 0.0; i++, it++) {
       candidates.emplace_back(it->second, it->first);
   }
 
@@ -306,12 +301,13 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
         Image input_histogram = image_to_histogram(input_section);
 
+        Image is = bilinear_resize(input_section, WINDOW, WINDOW);
         pair<uint32_t, double> result = matchMethod == 3
         ? search_for_fast_match(input_histogram, histogramMap[scale])
-        : search_for_exact_match(input_section,
+        : search_for_exact_match(is,
                 input_section_dx,
             input_section_dy,
-            mapping[scale],
+            mapping[WINDOW],
             mapping_dx[scale],
             mapping_dy[scale],
             matchMethod);
@@ -327,29 +323,14 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
     mtx.lock();
     processed++;
-    if (!(processed % 10)) {
+    if (!(processed % 128)) {
       printf("%d / %d processed\n", processed, total);
     }
     mtx.unlock();
 
 }
 
-void threadCombine(Image& outputImg, Image& toUse, Image& origHist,
-  Image& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
-  uint32_t yStart) {
-
-    //Image a = histogram_scale(toUse, origHist, matchHist);
-
-    for (int k = 0; k < inputC; k++) {
-      for (int j = 0; j < scale; j++) {
-        for (int i = 0; i < scale; i++) {
-          set_pixel(outputImg, xStart + i, yStart + j, k, toUse(i, j, k));
-        }
-      }
-    }
-}
-
-Image meanScale(Image& im1, Image& im2) {
+Image meanScale(Image& im1, Image& im2, float meanFactor) {
     Image im3(im1.w, im1.h, im1.c);
     for (uint32_t k = 0; k < im1.c; k++) {
         double m1 = 0.0;
@@ -365,7 +346,7 @@ Image meanScale(Image& im1, Image& im2) {
         }
         m1 /= count;
         m2 /= count;
-        double m3 = (m1 - m2) * .25;
+        double m3 = (m1 - m2) * meanFactor;
         for (uint32_t j = 0; j < im1.h; j++) {
             for (uint32_t i = 0; i < im1.w; i++) {
                 im3(i, j, k) = im1(i, j, k) - m3;
@@ -376,8 +357,8 @@ Image meanScale(Image& im1, Image& im2) {
     return im3;
 }
 
-void threadCombine(Image& outputImg, Image& toUse, Image& original, vector<uint32_t>& origHist,
-  vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
+void threadCombine(Image& outputImg, Image& toUse, Image& original, Image& origHist,
+  Image& matchHist, uint16_t scale, float meanFactor, uint32_t inputC, uint32_t xStart,
   uint32_t yStart) {
 
     Image a(toUse.w, toUse.h, toUse.c);
@@ -388,7 +369,7 @@ void threadCombine(Image& outputImg, Image& toUse, Image& original, vector<uint3
             }
         }
     }
-    Image b = meanScale(toUse, a);
+    Image b = meanScale(toUse, a, meanFactor);
 
     for (int k = 0; k < inputC; k++) {
       for (int j = 0; j < scale; j++) {
@@ -409,8 +390,8 @@ int main(int argc, char **argv) {
   vector<thread> threads;
 
   // Get input parameters
-  if (argc != 9) {
-    printf("USAGE: ./make-mosaic <mosaicSize> <levels> <scalePercent>");
+  if (argc != 10) {
+    printf("USAGE: ./make-mosaic <mosaicSize> <levels> <scalePercent> <meanAmount>");
     printf(" <squash?> <matchMethod> <sourceDir> <inputImg> <outputImg> \n");
     return 0;
   }
@@ -420,7 +401,7 @@ int main(int argc, char **argv) {
   auto mosaicSize = (uint16_t) atoi(argv[1]);
   if (mosaicSize <= 0) {
     fprintf(stderr, "ERROR: mosaicSize must be > 0.");
-    exit(0);
+    return 1;
   }
   printf("Mosaic with a base tile size = %d x %d\n", mosaicSize, mosaicSize);
 
@@ -429,7 +410,7 @@ int main(int argc, char **argv) {
   auto levels = (uint8_t) atoi(argv[2]);
   if (levels > 8) {
     fprintf(stderr, "ERROR: levels must be <= 8.");
-    exit(0);
+    return 1;
   }
   printf("Number of larger mosaic levels = %d\n", levels);
 
@@ -439,18 +420,25 @@ int main(int argc, char **argv) {
   double scaleFactor = atof(argv[3]);
   if (scaleFactor > 1 || scaleFactor <= 0) {
     fprintf(stderr, "ERROR: scale percent must be > 0 && < 1");
-    exit(0);
+    return 1;
   }
   printf("Level scale factor = %f\n", scaleFactor);
 
 
+  float meanFactor = atof(argv[4]);
+  if (meanFactor <= 0) {
+    fprintf(stderr, "ERROR: mean factor must be > 0");
+    return 1;
+  }
+
+
   // Get how we want to scale the image, 0 = crop, 1 = squash
-  bool squash = (bool) atoi(argv[4]);
+  bool squash = (bool) atoi(argv[5]);
   printf(squash ? "Squashing source images\n" : "Cropping source images\n");
 
 
   // Get match type
-  auto matchMethod = (uint8_t) atoi(argv[5]);
+  auto matchMethod = (uint8_t) atoi(argv[6]);
   if (matchMethod > 3) {
     fprintf(stderr, "ERROR: match method must be 0=exact, 1=derivative, 2=exact+derivative, or 3=histogram.");
     exit(0);
@@ -461,23 +449,24 @@ int main(int argc, char **argv) {
 
   // Get normal source images
   vector<Image> source;
-  load_images(source, argv[6]);
+  load_images(source, argv[7]);
   printf("Loaded %lu source images\n", source.size());
 
 
   // Get input image to make into mosaic
-  Image input = scaleImage(load_image(string(argv[7])), mosaicSize);
+  Image input = scaleImage(load_image(string(argv[8])), mosaicSize);
   printf("Loaded %d x %d input image\n", input.w, input.h);
 
 
   // Get output file name
-  string output = string(argv[8]);
+  string output = string(argv[9]);
   printf("Output file will be in output/%s.png\n", output.c_str());
 
 
   // Scale images into different desired sizes
   map<uint16_t, vector<Image> > mapping = scaleImages(source, mosaicSize, levels, squash);
 
+  map<uint16_t, vector<Image> > m1 = scaleImages(source, WINDOW, 1, squash);
 
 
   // Compute image derivatives for source images & input image
@@ -583,7 +572,7 @@ int main(int argc, char **argv) {
 
         thread th(threadMatch, x, y, idx, total, scale, matchMethod,
           std::ref(input), std::ref(input_dx), std::ref(input_dy),
-          std::ref(outputImg), std::ref(mapping), std::ref(mappingDx),
+          std::ref(outputImg), std::ref(m1), std::ref(mappingDx),
           std::ref(mappingDy), std::ref(histogramMap), std::ref(processed),
           std::ref(originalHistograms), std::ref(results));
         threads.push_back(std::move(th));
@@ -627,7 +616,7 @@ int main(int argc, char **argv) {
         Image& matchHist = histogramMap[scale][results[idx].first.second];
 
         thread th(threadCombine, std::ref(outputImg), std::ref(toUse), std::ref(input), std::ref(origHist),
-          std::ref(matchHist), scale, input.c, xStart, yStart);
+          std::ref(matchHist), scale, meanFactor, input.c, xStart, yStart);
         threads.push_back(std::move(th));
 
         count++;
@@ -639,7 +628,7 @@ int main(int argc, char **argv) {
 
   }
 
-
+  outputImg.clamp();
 
   save_png(outputImg, "output/" + output);
 
