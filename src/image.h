@@ -51,7 +51,7 @@ struct Image
     }
   
   // move assignment
-  Image& operator=(Image&& a)
+  Image& operator=(Image&& a) noexcept
     {
     if(this==&a)return *this;
     
