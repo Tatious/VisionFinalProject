@@ -302,20 +302,6 @@ void threadMatch(uint32_t x, uint32_t y, uint32_t idx, uint32_t total,
 
 }
 
-void threadCombine(Image& outputImg, Image& toUse, vector<uint32_t>& origHist,
-  vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
-  uint32_t yStart) {
-
-    //Image a = histogram_scale(toUse, origHist, matchHist);
-
-    for (int k = 0; k < inputC; k++) {
-      for (int j = 0; j < scale; j++) {
-        for (int i = 0; i < scale; i++) {
-          set_pixel(outputImg, xStart + i, yStart + j, k, toUse(i, j, k));
-        }
-      }
-    }
-}
 
 Image meanScale(Image& im1, Image& im2) {
     Image im3(im1.w, im1.h, im1.c);
@@ -333,16 +319,40 @@ Image meanScale(Image& im1, Image& im2) {
         }
         m1 /= count;
         m2 /= count;
-        double m3 = m1 - m2;
+        double m3 = (m1 - m2) * .25;
         for (uint32_t j = 0; j < im1.h; j++) {
             for (uint32_t i = 0; i < im1.w; i++) {
-                im3(i, j, k) = im1(i, j, k);
+                im3(i, j, k) = im1(i, j, k) - m3;
             }
         }
     }
 
     return im3;
 }
+
+void threadCombine(Image& outputImg, Image& toUse, Image& original, vector<uint32_t>& origHist,
+  vector<uint32_t>& matchHist, uint16_t scale, uint32_t inputC, uint32_t xStart,
+  uint32_t yStart) {
+
+    Image a(toUse.w, toUse.h, toUse.c);
+    for (int k = 0; k < inputC; k++) {
+        for (int j = 0; j < scale; j++) {
+            for (int i = 0; i < scale; i++) {
+                a(i, j, k) = original(xStart + i, yStart + j, k);
+            }
+        }
+    }
+    Image b = meanScale(toUse, a);
+
+    for (int k = 0; k < inputC; k++) {
+      for (int j = 0; j < scale; j++) {
+        for (int i = 0; i < scale; i++) {
+          set_pixel(outputImg, xStart + i, yStart + j, k, b(i, j, k));
+        }
+      }
+    }
+}
+
 
 
 
@@ -572,7 +582,7 @@ int main(int argc, char **argv) {
         vector<uint32_t> origHist = originalHistograms[idx];
         vector<uint32_t> matchHist = histogramMap[scale][results[idx].first.second];
 
-        thread th(threadCombine, std::ref(outputImg), std::ref(toUse), std::ref(origHist),
+        thread th(threadCombine, std::ref(outputImg), std::ref(toUse), std::ref(input), std::ref(origHist),
           std::ref(matchHist), scale, input.c, xStart, yStart);
         threads.push_back(std::move(th));
 
