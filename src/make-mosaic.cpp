@@ -456,7 +456,7 @@ int main(int argc, char **argv) {
 
   // Get input image to make into mosaic
   vector<Image> inputImages;
-  if (false) {
+  if (true) {
     inputImages.push_back(load_image(string(argv[8])));
   } else {
     load_images(inputImages, argv[8]);
@@ -579,17 +579,12 @@ int main(int argc, char **argv) {
       for (uint32_t y = 0; y < input.h / scale; y++) {
         for (uint32_t x = 0; x < input.w / scale; x++) {
 
-          /*thread th(threadMatch, x, y, idx, total, scale, matchMethod,
+          thread th(threadMatch, x, y, idx, total, scale, matchMethod,
             std::ref(input), std::ref(input_dx), std::ref(input_dy),
             std::ref(outputImg), std::ref(matchMapping), std::ref(mappingDx),
             std::ref(mappingDy), std::ref(histogramMap), std::ref(processed),
             std::ref(originalHistograms), std::ref(results));
-          threads.push_back(std::move(th));*/
-            threadMatch(x, y, idx, total, scale, matchMethod,
-                    std::ref(input), std::ref(input_dx), std::ref(input_dy),
-                    std::ref(outputImg), std::ref(matchMapping), std::ref(mappingDx),
-                    std::ref(mappingDy), std::ref(histogramMap), std::ref(processed),
-                    std::ref(originalHistograms), std::ref(results));
+          threads.push_back(std::move(th));
 
           idx++;
         }
@@ -642,8 +637,10 @@ int main(int argc, char **argv) {
 
     }
 
+    printf("%d/%lu\n", i+1, inputImages.size());
     outputImg.clamp();
-    save_png(outputImg, string(argv[8]) + "/result" + to_string(i));
+    //save_png(outputImg, string(argv[8]) + "/result" + to_string(i));
+    save_png(outputImg, "output/" + output);
   }
 
   return 0;
