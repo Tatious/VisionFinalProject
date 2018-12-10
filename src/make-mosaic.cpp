@@ -194,13 +194,6 @@ Image image_to_histogram(const Image& im, const uint16_t r=8, const uint16_t g=8
   return hist;
 }
 
-Image histogram_scale(Image& im, vector<uint32_t> original,
-                                                    vector<uint32_t> to_match){
-  // TODO
-  return im;
-
-}
-
 pair<uint32_t, double> search_for_exact_match(Image& input, Image& input_dx, Image& input_dy,
   vector<Image>& source, vector<Image>& source_dx, vector<Image>& source_dy, uint8_t mode) {
 
@@ -249,7 +242,7 @@ pair<uint32_t, double> search_for_fast_match(Image& image_hist, vector<Image>& s
     for (auto c = 0; c < image_hist.c; c++) {
       for (auto y = 0; y < image_hist.h; y++) {
         for (auto x = 0; x < image_hist.w; x++) {
-          intersection += powf(image_hist(x, y, c) - source_hist(x, y, c), 2);
+          intersection += fminf(image_hist(x, y, c), source_hist(x, y, c));
         }
       }
     }
@@ -260,7 +253,7 @@ pair<uint32_t, double> search_for_fast_match(Image& image_hist, vector<Image>& s
   // Pick from the top 10% of intersections.
   vector<pair<uint32_t, double>> candidates;
   auto it = intersections.begin();
-  for (auto i = 0; i < 10 && it->first != 0.0; i++, it++) {
+  for (auto i = 0; i < 3 && it->first != 0.0; i++, it++) {
       candidates.emplace_back(it->second, it->first);
   }
 
